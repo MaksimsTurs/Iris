@@ -51,7 +51,8 @@ static inline bool_t Iris_LexerIsSpace(const Iris_Lexer* lex)
 }
 
 static const i8_t* keywords[] = { 
-  "fn", "return"
+  "fn", "ret",
+  "var", "const"
 };
 
 static bool_t Iris_LexerIsKeyword(const Iris_Token* token)
