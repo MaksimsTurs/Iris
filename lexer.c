@@ -1,28 +1,29 @@
 #include "lexer.h"
+#include "typedef.h"
+#include <stdio.h>
+#include <string.h>
 
 static Iris_Token* Iris_LexerCreateToken(Iris_Lexer* lex, Iris_TokenType type)
 {
-  Iris_Token* token = (Iris_Token*)(lex->tokens->buff + (lex->tokens->len * sizeof(Iris_Token)));
+  Iris_Token token = {0};
   
-  token->type = type;
-  token->start = lex->src->buff - 1;
-  token->col = lex->col;
-  token->row = lex->row + 1;
-  token->len = 1;
+  token.type = type;
+  token.start = lex->src->buff - 1;
+  token.col = lex->col;
+  token.row = lex->row + 1;
+  token.len = 1;
 
-  lex->tokens->len++;
-  
-  return token;
-}
+  if(lex->tokens->len >= lex->tokens->cap)
+  {
+    lex->tokens = Iris_ArrBuffReAlloc(lex->tokens, lex->tokens->cap * 2);
+    
+    if(lex->tokens == null)
+    {
+      Iris_ReportSimpleError("could not allocate memory for tokens!", null);
+    }
+  }
 
-static void_t Iris_LexerInit(Iris_Lexer* lex)
-{
-  lex->base = lex->src->buff;
-  lex->tokens = Iris_MemBufferAlloc(256, sizeof(Iris_Token));
-  lex->row = 0;
-  lex->ch = 0;
-  lex->col = 0;
-  lex->i = 0;
+  return Iris_ArrBuffPush(lex->tokens, &token);
 }
 
 static inline bool_t Iris_LexerIsAlpha(const Iris_Lexer* lex)
@@ -52,32 +53,42 @@ static inline bool_t Iris_LexerIsSpace(const Iris_Lexer* lex)
 
 static const i8_t* keywords[] = { 
   "fn", "ret",
-  "var", "const"
+  "var", "const",
+  "if"
 };
 
 static bool_t Iris_LexerIsKeyword(const Iris_Token* token)
 {
-  i32_t length = sizeof(keywords) / sizeof(keywords[0]);
+  i64_t keyword_len = 0;
+  i64_t length = sizeof(keywords) / sizeof(keywords[0]);
+  bool_t res = false;
 
-  for(i32_t i = 0; i < length; i++) {
-    if(Iris_StrCmprN(keywords[i], token->start, token->len))
+  for(i64_t i = 0; i < length; i++) {
+    keyword_len = (i64_t)strlen(keywords[i]);
+
+    if(keyword_len != token->len)
+    {
+      res = false;
+    }
+
+    if(!strncmp(keywords[i], token->start, keyword_len))
     {
       return true;
     }
   }
 
-  return false;
+  return res;
 }
 
 static i8_t Iris_LexerReadChar(Iris_Lexer* lex)
 {
-  if(lex->src->buff - lex->base > (i64_t)lex->src->len)
+  if(lex->src->buff - lex->src_base > (i64_t)lex->src->len)
   {
     lex->ch = EOF;
   }
   else
   {
-    lex->ch = *lex->src->buff;
+    lex->ch = *(i8_t*)lex->src->buff;
     lex->src->buff++;
 
     if(lex->ch == '\n')
@@ -94,11 +105,19 @@ static i8_t Iris_LexerReadChar(Iris_Lexer* lex)
   return lex->ch;
 }
 
+void_t Iris_LexerInit(Iris_Lexer* lex)
+{
+  lex->src_base = lex->src->buff;
+  lex->tokens = Iris_ArrBuffAlloc(256, sizeof(Iris_Token));
+  lex->row = 0;
+  lex->ch = 0;
+  lex->col = 0;
+}
+
 void_t Iris_LexerTokenize(Iris_Lexer* lex)
 {
-  Iris_Token* token = NULL;
+  Iris_Token* token = null;
 
-  Iris_LexerInit(lex);
   Iris_LexerReadChar(lex);
 
   while(!Iris_LexerIsEOF(lex))
@@ -222,62 +241,59 @@ void_t Iris_LexerTokenize(Iris_Lexer* lex)
 
 void_t Iris_LexerDump(Iris_Lexer* lex)
 {
-  Iris_Token* token = NULL;
-
   for(u64_t i = 0; i < lex->tokens->len; i++)
   {
-    token = (Iris_Token*)(lex->tokens->buff + (i * sizeof(Iris_Token)));
-    Iris_LexerPrintToken(token);
+    Iris_LexerPrintToken((Iris_Token*)Iris_ArrBuffAt(lex->tokens, i));
   }
 }
 
 void_t Iris_LexerPrintToken(const Iris_Token *token)
 {
+  // TODO: Find %.*s formatting but for u64_t integers.
   printf(
-    "[%04u:%04u] \e[2m%s \e[m%.*s\n",
+    "[%04zu:%04zu] \e[2m%s \e[m%.*s\n",
     token->row, token->col,
     Iris_LexerTokenTypeToString(token->type),
-    token->len, token->start
+    (i32_t)token->len, token->start
   );
 }
 
 Iris_Token* Iris_LexerConsumeToken(Iris_Lexer* lex)
 {
-  Iris_Token* token = (Iris_Token*)(lex->tokens->buff + (lex->i * sizeof(Iris_Token)));
+  Iris_Token* token = Iris_ArrBuffAt(lex->tokens, lex->i);
 
   if(token->type == TK_EOF)
   {
-    return NULL;
+    return null;
   }
 
-  token = (Iris_Token*)(lex->tokens->buff + (lex->i * sizeof(Iris_Token)));
   lex->i++;
-
   return token;
 }
 
-Iris_Token* Iris_LexerPeekToken(Iris_Lexer* lex, u64_t off)
+Iris_Token* Iris_LexerPeekToken(Iris_Lexer* lex, i64_t offset)
 {
-  Iris_Token* token = NULL;
+  Iris_Token* token = null;
+  i64_t index = lex->i + offset;
 
-  if(lex->i + off >= lex->tokens->len)
+  if(index < 0 || index > lex->tokens->len)
   {
-    return NULL;
+    return null;
   }
   else
   {
-    token = (Iris_Token*)(lex->tokens->buff + ((lex->i + off) * sizeof(Iris_Token)));
+    token = Iris_ArrBuffAt(lex->tokens, index);
 
     if(token->type == TK_EOF)
     {
-      return NULL;
+      return null;
     }
   }
 
   return token;
 }
 
-i8_t* Iris_LexerTokenTypeToString(Iris_TokenType type)
+const i8_t* Iris_LexerTokenTypeToString(Iris_TokenType type)
 {
   switch(type) {
     case TK_IDENT:

@@ -8,6 +8,9 @@
 #include "mem.h"
 #include "typedef.h"
 
+#define Iris_ParserCalcVarStackIndex(fn) ((fn->stack_size == 0 ? 0 : fn->stack_size / 8)); fn->stack_size += 8;
+#define Iris_ParserIsNodeFnArg(node) (node->type == NODE_VAR && node->stmt.var.val == null)
+
 #define IRIS_PARSER_NODES_BUFF_SIZE 34
 
 // WeakExpr
@@ -21,6 +24,7 @@
 
 typedef enum {
   NODE_UNKNOWN = 0,
+  NODE_BLOCK,
   NODE_PROG,
   NODE_BINARY,
   NODE_NUMLIT,
@@ -45,6 +49,12 @@ typedef enum {
   OPER_LT
 } Iris_OperType;
 
+typedef struct Iris_Scope {
+  Iris_ArrBuff*           vars;
+  Iris_ArrBuff*           fns;
+  struct Iris_Scope*      parent;
+} Iris_Scope;
+
 typedef struct {
   struct Iris_AstNode* left;
   Iris_OperType        op;
@@ -52,13 +62,20 @@ typedef struct {
 } Iris_BinExpr;
 
 typedef struct {
-  Iris_Token* name;
+  Iris_Token*          name;
+  struct Iris_AstNode* nodes[IRIS_PARSER_NODES_BUFF_SIZE];
+  i64_t                len;
 } Iris_FnCallExp;
+
+typedef struct {
+  Iris_Token* name;
+  u64_t       index;
+} Iris_IdentExpr;
 
 typedef union {
   i64_t           num;
   Iris_BinExpr    bin;
-  Iris_Token*     ident;
+  Iris_IdentExpr  ident;
   Iris_FnCallExp  call;
 } Iris_Expr;
 
@@ -68,16 +85,21 @@ typedef struct {
 
 typedef struct {
   Iris_Token*           name;
-  i32_t                 index;
+  u64_t                 index;
   struct Iris_AstNode*  val;
 } Iris_VarStmt;
 
+typedef struct Iris_BlockStmt {
+  Iris_Scope             scope;
+  struct Iris_AstNode*   nodes[IRIS_PARSER_NODES_BUFF_SIZE];
+  u64_t                  len;
+} Iris_BlockStmt;
+
 typedef struct {
-  struct Iris_AstNode*  nodes[IRIS_PARSER_NODES_BUFF_SIZE];
-  i32_t                 len;
-  Iris_Token*           name;
-  i32_t                 stack_size;
-  i32_t                 args_len;
+  Iris_Token*    name;
+  Iris_BlockStmt block;
+  u64_t          stack_size;
+  u64_t          args_count;
 } Iris_FnDefStmt;
 
 typedef struct {
@@ -87,6 +109,7 @@ typedef struct {
 
 typedef union {
   Iris_ProgStmt   prog;
+  Iris_BlockStmt  block;
   Iris_VarStmt    var;
   Iris_FnDefStmt  fn;
   Iris_RetStmt    ret;
@@ -103,10 +126,11 @@ typedef struct Iris_AstNode {
 } Iris_AstNode;
 
 typedef struct {
-  struct Iris_AstNode*  root;
-  Iris_MemBuffer*       nodes;
+  struct Iris_AstNode* root;
+  Iris_ArrBuff*        nodes;
 } Iris_Parser;
 
+void_t Iris_ParserInit(Iris_Parser* parser);
 void_t Iris_ParserParse(Iris_Parser* parser, Iris_Lexer* lex);
 void_t Iris_ParserDump(const Iris_AstNode* node);
 

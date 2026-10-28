@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 #include "mem.h"
-#include "utils.h"
+#include "report.h"
 #include "typedef.h"
 
 typedef enum {
@@ -34,29 +34,31 @@ typedef enum {
 } Iris_TokenType;
 
 typedef struct {
-  Iris_TokenType type;
-  i8_t*     start;
-  i32_t     len;
-  i32_t     row;
-  i32_t     col;
+  Iris_TokenType  type;
+  i8_t*           start;
+  i64_t           len;
+  i64_t           row;
+  i64_t           col;
 } Iris_Token;
 
 typedef struct {
-  i32_t row;
-  i32_t col;
-  i8_t  ch;
+  i64_t         row;
+  i64_t         col;
+  i8_t          ch;
 
-  Iris_MemBuffer*   tokens;
-  u64_t             i;
-  Iris_MemBuffer*   src;
-  i8_t*             base;
+  ptr_t         src_base;
+  Iris_ArrBuff* tokens;
+  Iris_ArrBuff* src;
+
+  i64_t         i;
 } Iris_Lexer;
 
+void_t      Iris_LexerInit(Iris_Lexer* lex);
 void_t      Iris_LexerTokenize(Iris_Lexer* lex);
 void_t      Iris_LexerDump(Iris_Lexer* lex);
 void_t      Iris_LexerPrintToken(const Iris_Token* token);
 Iris_Token* Iris_LexerConsumeToken(Iris_Lexer* lex);
-Iris_Token* Iris_LexerPeekToken(Iris_Lexer* lex, u64_t off);
-i8_t*       Iris_LexerTokenTypeToString(Iris_TokenType type);
+Iris_Token* Iris_LexerPeekToken(Iris_Lexer* lex, i64_t off);
+const i8_t* Iris_LexerTokenTypeToString(Iris_TokenType type);
 
 #endif

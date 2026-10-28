@@ -1,8 +1,8 @@
 #include "lexer.h"
 #include "parser.h"
+#include "utils.h"
 #include "bytecode.h"
 #include "vm.h"
-#include "utils.h"
 
 int main(void)
 {
@@ -13,16 +13,20 @@ int main(void)
 
   lex.src = Iris_LoadFile("./main.iri");
 
+  Iris_LexerInit(&lex);
   Iris_LexerTokenize(&lex);
   Iris_LexerDump(&lex);
 
+  Iris_ParserInit(&parser);
   Iris_ParserParse(&parser, &lex);
   Iris_ParserDump(parser.root);
 
+  Iris_ByteCodeInit(&bytecode);
   Iris_ByteCodeGenerate(&bytecode, &parser);
   Iris_ByteCodeDump(&bytecode);
 
-  Iris_VmStart(&vm, &bytecode);
+  Iris_VmInit(&vm, &bytecode);
+  Iris_VmStart(&vm);
 
   return 0;
 }
