@@ -1,52 +1,16 @@
 #include "bytecode.h"
 #include "lexer.h"
 #include "mem.h"
+#include "opcodes.h"
 #include "parser.h"
 #include "typedef.h"
 #include "utils.h"
 #include <endian.h>
+#include <inttypes.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-
-static void_t Iris_ByteCodeJmpTableAddEntry(Iris_ByteCode* bytecode, Iris_ByteCodeJmpTableEntry* entry)
-{
-  bytecode->jmp_table.entries[bytecode->jmp_table.len++] = *entry; 
-}
-
-static Iris_ByteCodeJmpTableEntry* Iris_ByteCodeJmpTableGetEntry(Iris_ByteCode* bytecode, Iris_Token* name)
-{
-  Iris_Token* token = NULL;
-
-  for(i32_t i = 0; i < bytecode->jmp_table.len; i++)
-  {
-    token = bytecode->jmp_table.entries[i].name;
-    
-    if(Iris_StrCmprN(token->start, name->start, name->len))
-    {
-      return &bytecode->jmp_table.entries[i];
-    }
-  }
-
-  return NULL;
-}
-
-static bool_t Iris_ByteCodeJmpTableHasEntry(Iris_ByteCode* bytecode, Iris_Token* name)
-{
-  Iris_Token* token = NULL;
-
-  for(i32_t i = 0; i < bytecode->jmp_table.len; i++)
-  {
-    token = bytecode->jmp_table.entries[i].name;
-    
-    if(Iris_StrCmprN(token->start, name->start, name->len))
-    {
-      return true;
-    }
-  }
-
-  return false;
-}
 
 static void_t Iris_ByteCodeFindBottom(Iris_ByteCode* bytecode, Iris_AstNode* node)
 {
@@ -64,18 +28,29 @@ static void_t Iris_ByteCodeFindBottom(Iris_ByteCode* bytecode, Iris_AstNode* nod
   {
     case NODE_BINARY:
       if(node->expr.bin.left->type != NODE_NUMLIT &&
-         node->expr.bin.left->type != NODE_VAR) Iris_ByteCodeFindBottom(bytecode, node->expr.bin.left);
-      if(node->expr.bin.right->type != NODE_NUMLIT &&
-         node->expr.bin.right->type != NODE_VAR) Iris_ByteCodeFindBottom(bytecode, node->expr.bin.right);      
-      break;
-    case NODE_FN_DEF:
-      for(i32_t i = 0; i < node->stmt.fn.len; i++)
+         node->expr.bin.left->type != NODE_IDENT &&
+         !Iris_ParserIsNodeFnArg(node->expr.bin.left))
       {
-        Iris_ByteCodeFindBottom(bytecode, node->stmt.fn.nodes[i]);
+        Iris_ByteCodeFindBottom(bytecode, node->expr.bin.left);
+      }
+      if(node->expr.bin.right->type != NODE_NUMLIT &&
+         node->expr.bin.right->type != NODE_IDENT &&
+         !Iris_ParserIsNodeFnArg(node->expr.bin.right))
+      {
+        Iris_ByteCodeFindBottom(bytecode, node->expr.bin.right);
       }
       break;
+    case NODE_FN_DEF:
+      for(i32_t i = 0; i < node->stmt.fn.block.len; i++)
+      {
+        Iris_ByteCodeFindBottom(bytecode, node->stmt.fn.block.nodes[i]);
+    }
+      break;
     case NODE_VAR:
-      Iris_ByteCodeFindBottom(bytecode, node->stmt.var.val);
+      if(node->stmt.var.val != null)
+      {
+        Iris_ByteCodeFindBottom(bytecode, node->stmt.var.val);
+      }
       break;
     case NODE_PROG:
       for(i32_t i = 0; i < node->stmt.prog.length; i++)
@@ -86,35 +61,64 @@ static void_t Iris_ByteCodeFindBottom(Iris_ByteCode* bytecode, Iris_AstNode* nod
   }
 }
 
-static void_t Iris_ByteCodePushOpCode(Iris_ByteCode* bytecode, Iris_OpCode opcode)
+static void_t Iris_ByteCodePushOpCode(Iris_ByteCode* bytecode, Iris_Opcode opcode)
 {
-  bytecode->bytecode->buff[bytecode->bytecode->len] = (i8_t)opcode;
-  bytecode->bytecode->len++;
-}
-
-static void_t Iris_ByteCodePushStackIndex(Iris_ByteCode* bytecode, i32_t index)
-{
-  memcpy(bytecode->bytecode->buff + bytecode->bytecode->len, &index, sizeof(index));
-  bytecode->bytecode->len += sizeof(index);
-}
-
-static void_t Iris_ByteCodePushStackAddr(Iris_ByteCode* bytecode, i64_t addr)
-{
-  memcpy(bytecode->bytecode->buff + bytecode->bytecode->len, &addr, sizeof(addr));
-  bytecode->bytecode->len += sizeof(addr);
+  *(Iris_Opcode*)(bytecode->bytecode->buff + bytecode->bytecode->len) = opcode;
+  bytecode->bytecode->len += sizeof(opcode);
 }
 
 static void_t Iris_ByteCodePushI64(Iris_ByteCode* bytecode, i64_t num)
 {
-  memcpy(bytecode->bytecode->buff + bytecode->bytecode->len, &num, sizeof(num));
+  *(i64_t*)(bytecode->bytecode->buff + bytecode->bytecode->len) = num;
   bytecode->bytecode->len += sizeof(num);
 }
 
-static void_t Iris_ByteCodeGenerateFromBottom(Iris_ByteCode* bytecode, Iris_AstNode* node)
+static Iris_Opcode Iris_ByteCodeOperatorToOpCode(Iris_OperType type)
 {
-  Iris_ByteCodeJmpTableEntry* entry = NULL;
-  i64_t addr = 0;
+  switch(type) 
+  {
+    case OPER_PLUS:   return OPC_ADD;
+    case OPER_MINUS:  return OPC_SUB;
+    case OPER_MUL:    return OPC_MUL;
+    case OPER_DIV:    return OPC_DIV;
+  }
+}
 
+static void_t Iris_ByteCodeGenerateBinExpr(Iris_ByteCode* bytecode, Iris_AstNode* node)
+{
+  if(node->is_visited)
+  {
+    return;
+  };
+
+  node->is_visited = true;
+
+  switch(node->type)
+  {
+    case NODE_BINARY:
+      Iris_ByteCodeGenerateBinExpr(bytecode, node->expr.bin.left);
+      Iris_ByteCodeGenerateBinExpr(bytecode, node->expr.bin.right);
+
+      Iris_ByteCodePushOpCode(bytecode, Iris_ByteCodeOperatorToOpCode(node->expr.bin.op));
+      
+      if(node->parent)
+      {
+        Iris_ByteCodeGenerateBinExpr(bytecode, node->parent);
+      }
+      break;
+    case NODE_NUMLIT:
+      Iris_ByteCodePushOpCode(bytecode, OPC_PUSHNLOS);
+      Iris_ByteCodePushI64(bytecode, node->expr.num);
+      break;
+    case NODE_IDENT:
+      Iris_ByteCodePushOpCode(bytecode, OPC_PUSHSFOS);
+      Iris_ByteCodePushI64(bytecode, node->expr.ident.index);
+      break;
+  }
+}
+
+void_t Iris_ByteCodeGenerateStmtOrExpr(Iris_ByteCode* bytecode, Iris_AstNode* node)
+{
   if(node->is_visited)
   {
     return;
@@ -124,124 +128,188 @@ static void_t Iris_ByteCodeGenerateFromBottom(Iris_ByteCode* bytecode, Iris_AstN
 
   switch(node->type) 
   {
-    case NODE_VAR:
-      Iris_ByteCodePushOpCode(bytecode, OP_MOV);
-      Iris_ByteCodePushStackIndex(bytecode, node->stmt.var.index);
-      
-      if(node->stmt.var.val->type != NODE_NUMLIT)
+    case NODE_VAR: 
+      if(!Iris_ParserIsNodeFnArg(node))
       {
-        Iris_ByteCodePushI64(bytecode, node->stmt.var.val->expr.num);
+        switch(node->stmt.var.val->type)
+        {
+          case NODE_NUMLIT:
+            Iris_ByteCodePushOpCode(bytecode, OPC_PUSHNLSF);
+            Iris_ByteCodePushI64(bytecode, node->stmt.var.val->expr.num);
+            break;
+          case NODE_IDENT:
+            Iris_ByteCodePushOpCode(bytecode, OPC_PUSHSFSF);
+            Iris_ByteCodePushI64(bytecode, node->stmt.var.val->expr.ident.index);
+            break;
+          case NODE_BINARY:
+            bytecode->bottom = bytecode->root;
+            Iris_ByteCodeFindBottom(bytecode, node->stmt.var.val);
+            Iris_ByteCodeGenerateBinExpr(bytecode, bytecode->bottom);
+            Iris_ByteCodePushOpCode(bytecode, OPC_MOVOSSF);
+            Iris_ByteCodePushI64(bytecode, node->stmt.var.index);
+            break;
+        }
       }
-      else
-      {
-        Iris_ByteCodeGenerateFromBottom(bytecode, node->stmt.var.val);
-      }
-     break;
-    case NODE_FN_CALL:
-      Iris_ByteCodePushOpCode(bytecode, OP_CALL);
-      entry = Iris_ByteCodeJmpTableGetEntry(bytecode, node->expr.call.name);
-
-      if(entry)
-      {
-        addr = (i64_t)entry->start_ptr;
-      }
-
-      Iris_ByteCodePushStackAddr(bytecode, addr);
       break;
-  }
-
-  if(node && node->parent)
-  {
-    Iris_ByteCodeGenerateFromBottom(bytecode, node->parent);
+    break;
   }
 }
 
-static void_t Iris_ByteCodeGenerateFnDef(Iris_ByteCode* bytecode, Iris_AstNode* node)
+static void_t Iris_ByteCodeGenerateFnPrologue(Iris_ByteCode* bytecode, Iris_AstNode* node)
 {
-  Iris_FnDefStmt fn = node->stmt.fn;
-  Iris_ByteCodeJmpTableEntry entry = {0};
+  Iris_FnDefStmt *fn = &node->stmt.fn;
 
-  entry.name = fn.name;
-  entry.ret_ptr = NULL;
-  entry.start_ptr = bytecode->bytecode->buff + bytecode->bytecode->len;
+  fn->stack_size += sizeof(i64_t); // rp
+  fn->stack_size += sizeof(i64_t); // sp
+  fn->stack_size += sizeof(i64_t); // csp
+  fn->stack_size += sizeof(i64_t); // bp
+
+  Iris_ByteCodePushOpCode(bytecode, OPC_PROLOG);
+  Iris_ByteCodePushI64(bytecode, fn->stack_size);  
+}
+
+static void_t Iris_ByteCodeGenerateFnBody(Iris_ByteCode* bytecode, Iris_FnDefStmt* fn)
+{
+  Iris_RetStmt* ret_stmt = null;
+  Iris_AstNode* maybe_ret = fn->block.nodes[fn->block.len - 1];
+  i64_t end = 0;
+
+  if(maybe_ret->type == NODE_RET)
+  {
+    ret_stmt = &maybe_ret->stmt.ret;
+  }
   
-  Iris_ByteCodeJmpTableAddEntry(bytecode, &entry);
-  Iris_ByteCodePushOpCode(bytecode, OP_FN);
-  Iris_ByteCodePushI64(bytecode, fn.stack_size);
+  end = ret_stmt ? fn->block.len - 1 : fn->block.len;
+  
+  for(i64_t i = 0; i < end; i++)
+  {
+    Iris_ByteCodeGenerateStmtOrExpr(bytecode, fn->block.nodes[i]);
+  }
 }
 
 static void_t Iris_ByteCodeGenerateFnEpilogue(Iris_ByteCode* bytecode, Iris_AstNode* node)
 {
   Iris_FnDefStmt fn = node->stmt.fn;
-  Iris_ByteCodeJmpTableEntry* entry = NULL;
 
-  entry = Iris_ByteCodeJmpTableGetEntry(bytecode, fn.name);
-  entry->ret_ptr = bytecode->bytecode->buff;
-  Iris_ByteCodePushOpCode(bytecode, OP_RET);
-  Iris_ByteCodePushI64(bytecode, fn.stack_size); 
+  Iris_ByteCodePushOpCode(bytecode, OPC_RETVOID);
+}
+
+void_t Iris_ByteCodeInit(Iris_ByteCode *bytecode)
+{
+  bytecode->bytecode = Iris_ArrBuffAlloc(1024, sizeof(i8_t));
+  bytecode->bottom = null;
+  bytecode->depth = -1;
 }
 
 void_t Iris_ByteCodeGenerate(Iris_ByteCode* bytecode, Iris_Parser* parser)
 {
-  Iris_ProgStmt prog = {0};
+  Iris_BlockStmt prog = {0};
 
-  bytecode->bytecode = Iris_MemBufferAlloc(1024, sizeof(i8_t));
-  prog = parser->root->stmt.prog;
+  prog = parser->root->stmt.block;
+  bytecode->root = parser->root;
 
-  for(i32_t i = 0; i < prog.length; i++)
+  for(i32_t i = 0; i < prog.len; i++)
   {
     switch(prog.nodes[i]->type)
     {
       case NODE_FN_DEF:
         bytecode->bottom = parser->root;
+        bytecode->depth = -1;
 
-        Iris_ByteCodeGenerateFnDef(bytecode, prog.nodes[i]);
-        Iris_ByteCodeFindBottom(bytecode, prog.nodes[i]);
-        Iris_ByteCodeGenerateFromBottom(bytecode, bytecode->bottom);
+        Iris_ByteCodeGenerateFnPrologue(bytecode, prog.nodes[i]);
+        Iris_ByteCodeGenerateFnBody(bytecode, &prog.nodes[i]->stmt.fn);
         Iris_ByteCodeGenerateFnEpilogue(bytecode, prog.nodes[i]);
-        break;
-      case NODE_FN_CALL:
-        bytecode->bottom = parser->root;
-
-        Iris_ByteCodeFindBottom(bytecode, prog.nodes[i]);
-        Iris_ByteCodeGenerateFromBottom(bytecode, bytecode->bottom);
         break;
     }
   }
 }
 
+static const i8_t* Iris_ByteCodeOpCodeToString(Iris_Opcode opcode)
+{
+  switch(opcode) 
+  {
+    case OPC_PROLOG:
+      return "Prolog";
+    case OPC_PUSHNLOS:
+      return "Push[NLOS]";
+    case OPC_PUSHNLSF:
+      return "Push[NLSF]";
+    case OPC_PUSHSFOS:
+      return "Push[SFOS]";
+    case OPC_PUSHSFSF:
+      return "Push[SFSF]";
+    case OPC_MOVOSSF:
+      return "Mov[OSSF]";
+    case OPC_RETVAL:
+      return "Ret[Val]";
+    case OPC_RETVOID:
+      return "Ret[Void]";
+    case OPC_ADD:
+      return "Add";
+    case OPC_SUB:
+      return "Sub";
+    case OPC_MUL:
+      return "Mul";
+    case OPC_DIV:
+      return "Div";
+  }
+}
+
 void_t Iris_ByteCodeDump(const Iris_ByteCode* bytecode)
 {
-  i64_t operand = 0;
-  i32_t index = 0;
-  i8_t* buffer = bytecode->bytecode->buff;
-  i8_t code = 0;
+  ptr_t ip = bytecode->bytecode->buff;
+  i64_t a = 0;
+  i64_t b = 0;
+  Iris_Opcode code = 0;
 
-  for(i32_t i = 0; i < bytecode->bytecode->len; i++)
+  printf("Size of bytecode: %li\n", bytecode->bytecode->len);
+
+  while(ip - bytecode->bytecode->buff < bytecode->bytecode->len)
   {
-    code = buffer[i];
-
+    code = *(Iris_Opcode*)ip;
+    ip += sizeof(code);
+    
     switch(code) 
     {
-      case OP_MOV: 
-        memcpy(&index, buffer + i + 1, sizeof(index));
-        memcpy(&operand, buffer + i + 1 + sizeof(index), sizeof(operand));
-        printf("\e[2mMov \e[m[sp + %i] %lli\n", index, operand);
-        buffer += sizeof(index) + sizeof(operand);
+      case OPC_PROLOG:
+        a = *(i64_t*)ip;
+        ip += sizeof(a);
+        printf("\e[2m%s\e[0m %li\n", Iris_ByteCodeOpCodeToString(code), a);
         break;
-      case OP_FN:
-        memcpy(&operand, buffer + i + 1, sizeof(operand));
-        printf("\e[2mFn \e[m%lli\n", operand);
-        buffer += sizeof(operand);
+      case OPC_PUSHNLOS:
+        a = *(i64_t*)ip;
+        ip += sizeof(a);
+        printf("\e[2m%s\e[0m %li\n", Iris_ByteCodeOpCodeToString(code), a);
         break;
-      case OP_CALL:
-        buffer+=i+1;
-        printf("\e[2mFnCall \e[0m%lli\n", (i64_t)*((i64_t*)buffer));
+      case OPC_PUSHNLSF:
+        a = *(i64_t*)ip;
+        ip += sizeof(a);
+        printf("\e[2m%s\e[0m %li\n", Iris_ByteCodeOpCodeToString(code), a);
         break;
-      case OP_RET:
-        memcpy(&operand, buffer + i + 1, sizeof(operand));
-        printf("\e[2mRet \e[m%lli\n", operand);
-        buffer += sizeof(operand);
+      case OPC_PUSHSFSF:
+        a = *(i64_t*)ip;
+        ip += sizeof(a);
+        printf("\e[2m%s\e[0m %li\n", Iris_ByteCodeOpCodeToString(code), a);
+        break;
+      case OPC_PUSHSFOS:
+        a = *(i64_t*)ip;
+        ip += sizeof(a);
+        printf("\e[2m%s\e[0m %li\n", Iris_ByteCodeOpCodeToString(code), a);
+        break;
+      case OPC_MOVOSSF:
+        a = *(i64_t*)ip;
+        ip += sizeof(a);
+        printf("\e[2m%s\e[0m %li\n", Iris_ByteCodeOpCodeToString(code), a);
+        break;
+      case OPC_RETVAL:
+      case OPC_RETVOID:
+        printf("\e[2m%s\e[0m\n", Iris_ByteCodeOpCodeToString(code));
+        break;
+      case OPC_ADD:
+      case OPC_MUL:
+      case OPC_SUB:
+      case OPC_DIV:
+        printf("\e[2m%s\e[0m\n", Iris_ByteCodeOpCodeToString(code));
         break;
     }
   }

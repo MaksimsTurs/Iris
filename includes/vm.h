@@ -3,22 +3,34 @@
 
 #include "bytecode.h"
 #include "lexer.h"
+#include "mem.h"
 #include "typedef.h"
 
-#define IRIS_VM_STACK_SIZE 1024
+typedef struct Iris_VmStack
+{
+  Iris_ArrBuff*        seg;
+  struct Iris_VmStack* next;
+} Iris_VmStack;
 
-typedef struct Iris_VmStackBuffer {
-  i8_t*                       buff;
-  u64_t                       cap;
-  u64_t                       len;
-  struct Iris_VmStackBuffer*  next;
-} Iris_VmStackBuffer;
+typedef struct
+{
+  
+} Iris_VmStackFrame;
 
-typedef struct {
-  i32_t               ip;
-  Iris_VmStackBuffer* stack_buffer;
+typedef struct
+{
+  Iris_Opcode   opcode;
+  Iris_ArrBuff* bytecode;
+  Iris_VmStack  stack;
+  Iris_VmStack  op_stack;
+  ptr_t         ip;
+  ptr_t         rp;
+  ptr_t         sp;
+  ptr_t         csp;
+  ptr_t         bp;
 } Iris_Vm;
 
-void_t Iris_VmStart(Iris_Vm* vm, Iris_ByteCode* bytecode);
+void_t Iris_VmInit(Iris_Vm* vm, Iris_ByteCode* bytecode);
+void_t Iris_VmStart(Iris_Vm* vm);
 
 #endif

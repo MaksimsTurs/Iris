@@ -1,95 +1,146 @@
 #include "vm.h"
 #include "bytecode.h"
+#include "mem.h"
+#include "opcodes.h"
 #include "typedef.h"
+#include <endian.h>
+#include <inttypes.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
-static Iris_VmStackBuffer* Iris_VmStackBufferAlloc(void_t)
+static bool_t Iris_VmIsRunning(const Iris_Vm* vm)
 {
-  void* buff = malloc(sizeof(Iris_VmStackBuffer) + IRIS_VM_STACK_SIZE);
-  memset(buff, 0, sizeof(Iris_VmStackBuffer) + IRIS_VM_STACK_SIZE);
-  Iris_VmStackBuffer* stack = buff;
-
-  stack->buff = buff + sizeof(Iris_VmStackBuffer);
-  stack->cap = IRIS_VM_STACK_SIZE;
-  stack->len = 0;
-  stack->next = NULL;
-
-  return stack;
+  return (vm->ip - vm->bytecode->buff) < vm->bytecode->len;
 }
 
-static i8_t* Iris_VmStackBufferAllocFrame(Iris_VmStackBuffer* stack_buffer, i64_t size)
+static void_t Iris_VmFetchOpcode(Iris_Vm* vm)
 {
-  i8_t* frame = stack_buffer->buff + stack_buffer->len;
-  stack_buffer->len += size;
-  return frame;
+  vm->opcode = *(Iris_Opcode*)vm->ip;
+  vm->ip += sizeof(Iris_Opcode);
 }
 
-static i8_t* Iris_VmStackBufferDeallocFrame(Iris_VmStackBuffer* stack_buffer, i64_t size)
+static i64_t Iris_VmFetchInt64(Iris_Vm* vm)
 {
-  stack_buffer->len -= size;
-  return stack_buffer->buff - size;
+  return *(i64_t*)(vm->ip);
 }
 
-static void_t Iris_VmInit(Iris_Vm* vm)
+static void_t Iris_VmStackAlloc(Iris_Vm* vm, i64_t size)
 {
-  vm->stack_buffer = Iris_VmStackBufferAlloc();
-  vm->ip = 0;
+  vm->bp = vm->sp;
+  vm->csp = vm->bp;
+  vm->sp += size;
 }
 
-void_t Iris_VmStart(Iris_Vm *vm, Iris_ByteCode *bytecode)
+static i64_t Iris_VmStackReadInt64(Iris_Vm* vm, i64_t index)
 {
-  Iris_VmInit(vm);
+  index += 4;
+  return *(i64_t*)(vm->bp + (sizeof(i64_t) * index));
+}
 
-  i32_t index = 0;
-  i8_t code = 0;
+static void_t Iris_VmStackWriteInt64(Iris_Vm* vm, i64_t index, i64_t val)
+{
+  index += 4;
+  *(i64_t*)(vm->bp + (sizeof(val) * index)) = val;
+}
 
-  i64_t stack_size = 0;
-  i64_t fn_addr = 0;
-  i64_t ret_addr = 0;
-  i8_t* buffer = bytecode->bytecode->buff;
-  i8_t* frame = NULL;
+static void_t Iris_VmStackPushInt64(Iris_Vm* vm, i64_t val)
+{
+  *(i64_t*)vm->csp = val;
+  vm->csp += sizeof(i64_t);
+}
 
-  buffer += (i32_t)(bytecode->bytecode->len - (sizeof(i8_t) + sizeof(i64_t)));
-  
-  while((buffer - bytecode->bytecode->buff) < bytecode->bytecode->len)
+static void_t Iris_VmOPStackPushInt64(Iris_Vm* vm, i64_t val)
+{
+  *(i64_t*)(vm->op_stack.seg->buff + vm->op_stack.seg->len) = val;
+  vm->op_stack.seg->len += sizeof(val);
+}
+
+static i64_t Iris_VmOPStackPopInt64(Iris_Vm* vm)
+{
+  i64_t val = *(i64_t*)(vm->op_stack.seg->buff + (vm->op_stack.seg->len - sizeof(i64_t)));
+  vm->op_stack.seg->len -= sizeof(i64_t);
+  return val;
+}
+
+void_t Iris_VmInit(Iris_Vm* vm, Iris_ByteCode* bytecode)
+{
+  vm->bytecode = bytecode->bytecode;
+  vm->ip = bytecode->bytecode->buff;
+  vm->rp = bytecode->bytecode->buff + bytecode->bytecode->len;
+  vm->stack.next = null;
+  vm->op_stack.seg = Iris_ArrBuffAlloc(512, sizeof(i8_t));
+  vm->stack.seg = Iris_ArrBuffAlloc(1024, sizeof(i8_t));
+  vm->sp = vm->stack.seg->buff;
+  vm->bp = vm->stack.seg->buff;
+}
+
+void_t Iris_VmStart(Iris_Vm *vm)
+{
+  i64_t tmp_a = 0;
+  i64_t tmp_b = 0;
+  ptr_t tmp_sp = null;
+  ptr_t tmp_csp = null;
+  ptr_t tmp_bp = null;
+
+  while(Iris_VmIsRunning(vm))
   {
-    code = *buffer++;
+    Iris_VmFetchOpcode(vm);
 
-    switch(code) 
+    switch(vm->opcode)
     {
-      case OP_MOV:
-        printf("OP_MOV\n");
-        index = (i32_t)*(buffer + vm->ip);
-        *((i64_t*)frame + (index + sizeof(i32_t))) = (i64_t)*(buffer + vm->ip + sizeof(i32_t));
+      case OPC_PROLOG:
+        tmp_a = Iris_VmFetchInt64(vm);
+        tmp_sp = vm->sp;
+        tmp_csp = vm->csp;
+        tmp_bp = vm->bp;
+        Iris_VmStackAlloc(vm, tmp_a);
+        Iris_VmStackPushInt64(vm, (i64_t)tmp_sp);
+        Iris_VmStackPushInt64(vm, (i64_t)tmp_csp);
+        Iris_VmStackPushInt64(vm, (i64_t)tmp_bp);
+        Iris_VmStackPushInt64(vm, (i64_t)vm->rp);
         break;
-      case OP_FN:
-        stack_size = (i64_t)*(i64_t*)buffer;
-        stack_size += sizeof(i64_t);
-        buffer += sizeof(i64_t);
-
-        frame = Iris_VmStackBufferAllocFrame(vm->stack_buffer, stack_size);
-        *(i64_t*)frame = ret_addr;
-                
-        printf("OP_FN: fn_addr: %lli stack_size: %lli ret_addr: %lli\n", fn_addr, stack_size, *(i64_t*)frame);
+      case OPC_PUSHNLOS:
+        tmp_a = Iris_VmFetchInt64(vm);
+        Iris_VmOPStackPushInt64(vm, tmp_a);
         break;
-      case OP_CALL:
-        fn_addr = *(i64_t*)buffer;
-        buffer += sizeof(i64_t);
-        ret_addr = (i64_t)buffer;
-        buffer = (i8_t*)fn_addr;
-
-        printf("OP_CALL: fn_addr: %lli ret_addr: %lli\n", fn_addr, ret_addr);
+      case OPC_PUSHNLSF:
+        tmp_a = Iris_VmFetchInt64(vm);
+        Iris_VmStackPushInt64(vm, tmp_a);
         break;
-      case OP_RET:
-        stack_size = (i64_t)*(i64_t*)buffer;
-        stack_size += sizeof(i64_t);
-        ret_addr = (i64_t)*(i64_t*)frame;
-        buffer = (i8_t*)ret_addr;
-
-        frame = Iris_VmStackBufferDeallocFrame(vm->stack_buffer, stack_size);
-        printf("OP_RET: stack_size: %lli ret_addr: %lli\n", stack_size, ret_addr);
+      case OPC_PUSHSFOS:
+        tmp_a = Iris_VmFetchInt64(vm);
+        tmp_a = Iris_VmStackReadInt64(vm, tmp_a);
+        Iris_VmOPStackPushInt64(vm, tmp_a); 
+        break;
+      case OPC_MOVOSSF:
+        tmp_a = Iris_VmFetchInt64(vm);
+        tmp_b = Iris_VmOPStackPopInt64(vm);
+        Iris_VmStackWriteInt64(vm, tmp_a, tmp_b);
+        break;
+      case OPC_ADD:
+        tmp_a = Iris_VmOPStackPopInt64(vm);
+        tmp_b = Iris_VmOPStackPopInt64(vm);
+        Iris_VmOPStackPushInt64(vm, tmp_a + tmp_b);
+        break;
+      case OPC_SUB:
+        tmp_b = Iris_VmOPStackPopInt64(vm);
+        tmp_a = Iris_VmOPStackPopInt64(vm);
+        Iris_VmOPStackPushInt64(vm, tmp_a - tmp_b);
+        break; 
+      case OPC_MUL:
+        tmp_a = Iris_VmOPStackPopInt64(vm);
+        tmp_b = Iris_VmOPStackPopInt64(vm);
+        Iris_VmOPStackPushInt64(vm, tmp_a * tmp_b);
+        break;
+      case OPC_RETVOID:
+        tmp_sp = (ptr_t)Iris_VmStackReadInt64(vm, -4);
+        tmp_csp = (ptr_t)Iris_VmStackReadInt64(vm, -3);
+        tmp_bp = (ptr_t)Iris_VmStackReadInt64(vm, -2);
+        vm->ip = (ptr_t)Iris_VmStackReadInt64(vm, -1);
+        vm->sp = tmp_sp;
+        vm->csp = tmp_csp;
+        vm->bp = tmp_bp;
         break;
     }
   }
