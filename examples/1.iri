@@ -1,0 +1,22 @@
+-- Struct definition
+strct person
+{
+  name
+  age
+  greeting:(name) {}
+}
+
+-- Function definition
+main:()
+{
+  -- Creation of a struct of type "person"
+  person = person {
+    name: "Maksim"
+    age: 10
+  };
+
+  -- Accessing a name field
+  person:name;
+  -- Calling a function of a struct
+  person:greeting();
+}

@@ -9,8 +9,15 @@ CFLAGS = -Wfloat-equal \
 				 -Wshadow \
 				 -Wundef \
 				 -Wconversion
-CFLAGS += -ggdb -O0
-CSRC		= main.c lexer.c parser.c bytecode.c vm.c utils.c mem.c
+CFLAGS += -static -march=native -mtune=native
+CFLAGS += -O0 -ggdb
+# CFLAGS += -O3 -flto
+# CFLAGS += -fno-math-errno -funroll-loops
+CSRC		= ./src/main.c ./src/iris.c 
+CSRC	 += ./src/lexer.c 
+CSRC	 += ./src/parser.c 
+CSRC	 += ./src/mem.c ./src/utils.c
+EXE			= irisc
 
 all:
-	$(CC) $(CFLAGS) -I./includes $(CSRC) -o main
+	$(CC) $(CFLAGS) $(CSRC) -I./ -o $(EXE)
