@@ -5,7 +5,7 @@
 
 #define Iris_Nan      NAN
 #define Iris_Infinity INFINITY
-#define Iris_Nil      null
+#define Iris_Nil      0
 typedef f64_t         Iris_Float64;
 typedef i64_t         Iris_Int64;
 typedef bool_t        Iris_Bool;

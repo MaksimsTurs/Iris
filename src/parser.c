@@ -8,8 +8,9 @@
 Iris_Node* Iris_ParserParseCondExpr(Iris_Parser* parser, Iris_Node* parent, Iris_Scope* scope);
 Iris_Node* Iris_ParserParseStmtOrExpr(Iris_Parser* parser, Iris_Node* fn, Iris_Node* block);
 
-#define Iris_ParserPrint(depth, type, msg, ...) printf(IRIS_ANSI_DIM "%*s%s" IRIS_ANSI_RES ": " msg, depth, "", Iris_ParserNodeTypeToString(type), __VA_ARGS__)
-#define Iris_ParserIsEof($token)  ((($token) == null) || (($token)->type == TK_EOF))
+#define Iris_ParserPrint(depth, type, msg, ...)      printf(IRIS_ANSI_DIM "%*s%s" IRIS_ANSI_RES ": " msg, depth, "", Iris_ParserNodeTypeToString(type), __VA_ARGS__)
+#define Iris_ParserIsEof($token)                     ((($token) == null) || (($token)->type == TK_EOF))
+#define Iris_ParserIsKeyword($token, $keyword, $len) Iris_StrnCmp(($token)->start, $keyword, Iris_Max(($token)->len, $len))
 
 static inline bool_t Iris_ParserIsStrctPropCall(Iris_Lexer* lex, const Iris_Token* maybe_strct_ident)
 {
@@ -112,6 +113,7 @@ static Iris_Node* Iris_ParserCreateIfStmt(Iris_Arena* mem, Iris_Node* parent, Ir
 
   stmt->expr = expr;
   stmt->block = Iris_ParserCreateBlockStmt(mem, node, scope_parent);
+  Iris_ArrayNew(*stmt, IRIS_PARSER_DEF_NODE_ARR_CAP);
 
   return node;
 }
@@ -392,26 +394,10 @@ static Iris_Node* Iris_ParserParseLit(Iris_Parser* parser, Iris_Node* parent, Ir
       prop.typename = prop_desc.typename;
       Iris_LexerConsumeToken(parser->lex);
       Iris_LexerConsumeToken(parser->lex);
-      Iris_LexerPrint(Iris_LexerPickToken(parser->lex, 0));
       prop.val = Iris_ParserParseCondExpr(parser, parent, scope);
       Iris_ArrayPush(lit_expr->strct, prop);
     }
 
-    for(i64_t i = 0; i < strct_def->len; i++)
-    {
-      prop_desc = strct_def->buff[i];
-
-      if(prop_desc.typename)
-      {
-        prop.key = prop_desc.key;
-        prop.offset = prop_desc.offset;
-        prop.size = prop_desc.size;
-        prop.typename = prop_desc.typename;
-        prop.val = prop_desc.val;
-        Iris_ArrayPush(lit_expr->strct, prop);
-      }
-    }
-    
     Iris_LexerConsumeToken(parser->lex);
   }
   else if(type == NODE_BOOLLIT)
@@ -511,6 +497,7 @@ static Iris_Node* Iris_ParserParsePrimaryExpr(Iris_Parser* parser, Iris_Node* pa
       lit_expr = var_stmt->val->as;
       prop = Iris_ParserGetStrctProp(((Iris_StrctDefStmt*)lit_expr->strct.def)->buff, ((Iris_StrctDefStmt*)lit_expr->strct.def)->len, anything);
       node = Iris_ParserCreateStrctPropAccessExpr(parser->arena, parent, null, prop->offset, var_stmt->offset);
+      node->type = NODE_STRCT_FN_ACCESS;
       fn_call = Iris_ParserParseFnCallExpr(parser, node, scope);
       ((Iris_StrctPropAccessExpr*)node->as)->val = fn_call;
     }
@@ -566,7 +553,8 @@ static Iris_Node* Iris_ParserParseWeakTermExpr(Iris_Parser* parser, Iris_Node* p
 
   while((token = Iris_LexerPickToken(parser->lex, 0)) && 
         (token->type == TK_PLUS || token->type == TK_MINUS ||
-         token->type == TK_AND || token->type == TK_OR)) 
+         token->type == TK_EQ || token->type == TK_EQ_GT || token->type == TK_EQ_LT ||
+         token->type == TK_GT || token->type == TK_LT)) 
   {
     op = Iris_ParserTokenTypeToOprType(token->type);
     Iris_LexerConsumeToken(parser->lex);
@@ -585,8 +573,7 @@ Iris_Node* Iris_ParserParseCondExpr(Iris_Parser* parser, Iris_Node* parent, Iris
   Iris_Token* token = NULL;
   
   while((token = Iris_LexerPickToken(parser->lex, 0)) && (
-        token->type == TK_EQ || token->type == TK_EQ_GT || token->type == TK_EQ_LT ||
-        token->type == TK_GT || token->type == TK_LT ||
+        token->type == TK_AND || token->type == TK_OR ||
         token->type == TK_ASSIGN)) 
   {
     op = Iris_ParserTokenTypeToOprType(token->type);
@@ -772,26 +759,49 @@ static Iris_Node* Iris_ParserParseIfStmt(Iris_Parser* parser, Iris_Node* fn, Iri
   Iris_BlockStmt* block_stmt = block->as;
   Iris_Token* token = null;
   Iris_IfStmt* stmt = null;
+  Iris_IfStmt* next_stmt = null;
   Iris_Node* node = null;
+  Iris_Node* next_node = null;
   Iris_Node* expr = null;
   Iris_Node* child = null;
   Iris_NodeType kind = NODE_UNKNOWN;
 
   token = Iris_LexerConsumeToken(parser->lex);
-  kind = Iris_StrnCmp(token->start, "else", 4) ? NODE_ELSE :
-    Iris_StrnCmp(token->start, "if", 2) ? NODE_IF : NODE_ELIF;
-  node = Iris_ParserCreateIfStmt(parser->arena, block, null, &block_stmt->scope, kind);
-  expr = kind == NODE_ELSE ? null : Iris_ParserParseCondExpr(parser, fn, &block_stmt->scope);
+  node = Iris_ParserCreateIfStmt(parser->arena, block, Iris_ParserParseCondExpr(parser, fn, &block_stmt->scope), &block_stmt->scope, NODE_IF);
   stmt = node->as;
-  stmt->expr = expr;
   block_stmt = stmt->block->as;
   Iris_LexerConsumeToken(parser->lex);
+ 
   while((token = Iris_LexerPickToken(parser->lex, 0)) && token->type != TK_BBRACES_R)
   {
     child = Iris_ParserParseStmtOrExpr(parser, fn, stmt->block);
     Iris_ArrayPush(block_stmt->nodes, child);
   }
+  
   Iris_LexerConsumeToken(parser->lex);
+  block_stmt = block->as;
+
+  while((token = Iris_LexerPickToken(parser->lex, 0)) && (Iris_ParserIsKeyword(token, "else", 4) || Iris_ParserIsKeyword(token, "elif", 4)))
+  {
+    Iris_LexerConsumeToken(parser->lex);
+    kind = Iris_ParserIsKeyword(token, "else", 4) ? NODE_ELSE : NODE_ELIF;
+    next_node = Iris_ParserCreateIfStmt(parser->arena, block, null, &block_stmt->scope, kind);
+    expr = kind == NODE_ELSE ? null : Iris_ParserParseCondExpr(parser, next_node, &block_stmt->scope);
+    next_stmt = next_node->as;
+    next_stmt->expr = expr;
+    block_stmt = next_stmt->block->as;
+    Iris_LexerConsumeToken(parser->lex);
+
+    while((token = Iris_LexerPickToken(parser->lex, 0)) && token->type != TK_BBRACES_R)
+    {
+      Iris_LexerPrint(token);
+      child = Iris_ParserParseStmtOrExpr(parser, fn, next_stmt->block);
+      Iris_ArrayPush(block_stmt->nodes, child);
+    }
+  
+    Iris_ArrayPush(*stmt, next_node);
+    Iris_LexerConsumeToken(parser->lex);
+  }
 
   return node;
 }
@@ -1008,10 +1018,6 @@ void_t Iris_ParserDump(const Iris_Node* node, i64_t max_depth)
       depth -= depth_step;
     }
       break;
-    case NODE_STRCT_DEF:
-    {
-    }
-      break;
     case NODE_STRCT_PROP_ACCESS:
     {
       Iris_StrctPropAccessExpr* access = node->as;
@@ -1019,6 +1025,15 @@ void_t Iris_ParserDump(const Iris_Node* node, i64_t max_depth)
       depth += depth_step;
       Iris_ParserDump(access->val, max_depth);
       depth -= depth_step;
+    }
+      break;
+    case NODE_STRCT_FN_ACCESS:
+    {
+      Iris_StrctPropAccessExpr* access = node->as;
+      Iris_ParserPrint(depth, NODE_STRCT_FN_ACCESS, "[%li]:[%li]\n", access->stack_offset, access->instrct_offset);
+      depth += depth_step;
+      Iris_ParserDump(access->val, max_depth);
+      depth -= depth_step; 
     }
       break;
     case NODE_NUMLIT:
@@ -1037,6 +1052,10 @@ void_t Iris_ParserDump(const Iris_Node* node, i64_t max_depth)
       depth += depth_step;
       Iris_ParserDump(stmt->block, max_depth);
       depth -= depth_step;
+      for(i64_t i = 0; i < stmt->len; i++)
+      {
+        Iris_ParserDump(((Iris_Node*)stmt->buff[i]), max_depth);
+      }
     }
       break;
     case NODE_ELSE:
@@ -1103,7 +1122,7 @@ void_t Iris_ParserDump(const Iris_Node* node, i64_t max_depth)
     {
       Iris_Strct* lit = node->as;
       Iris_StrctDefStmt* stmt = (ptr_t)lit->def;
-      Iris_ParserPrint(depth, NODE_STRCTLIT, "%.*s[%i]\n", stmt->name->len, stmt->name->start, stmt->size);
+      Iris_ParserPrint(depth, NODE_STRCTLIT, "%.*s[%li][%i]\n", stmt->name->len, stmt->name->start, lit->len, stmt->size);
       depth += depth_step;
       for(i64_t i = 0; i < lit->len; i++)
       {
@@ -1142,6 +1161,7 @@ const i8_t* Iris_ParserNodeTypeToString(Iris_NodeType type)
     case NODE_INFINITYLIT:       return "InfinityLit";
     case NODE_NULLLIT:           return "NilLit";
     case NODE_STRCT_PROP_ACCESS: return "StrctPropAccess";
+    case NODE_STRCT_FN_ACCESS:   return "StrctFnAccess";
     case NODE_STRCT_PROP:        return "StrctProp";
     case NODE_UNKNOWN:
     default:

@@ -1,7 +1,8 @@
 #include "iris/iris.h"
 #include "iris/lexer.h"
 #include "iris/parser.h"
-// #include "iris/codegen.h"
+#include "iris/utils.h"
+#include "iris/codegen.h"
 // #include "iris/vm.h"
 
 int main(i32_t argc, i8_t** argv)
@@ -9,7 +10,7 @@ int main(i32_t argc, i8_t** argv)
   Iris_Options options = {0};
   Iris_Lexer lex = {0};
   Iris_Parser parser = {0};
-  // Iris_Codegen codegen = {0};
+  Iris_Codegen codegen = {0};
   // Iris_Vm vm = {0};
 
   if(Iris_ProcessCmdArgs(&options, argv, argc))
@@ -29,14 +30,14 @@ int main(i32_t argc, i8_t** argv)
     {
       Iris_ParserDump(parser.root, -1);
     }
-    //
-    // Iris_CodegenInit(&codegen, &parser);
-    // Iris_CodegenGenerate(&codegen);
-    //
-    // if(options.p_code)
-    // {
-    //   Iris_CodegenDump(&codegen);
-    // }
+
+    Iris_CodegenInit(&codegen, &parser);
+    Iris_CodegenGenerate(&codegen);
+
+    if(options.p_code)
+    {
+      Iris_CodegenDump(&codegen);
+    }
 
     // Iris_VmNew(&vm, &codegen);
     // Iris_VmStart(&vm);

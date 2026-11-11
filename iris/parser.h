@@ -38,6 +38,7 @@ typedef enum
   NODE_BIN,
   NODE_IDENT,
   NODE_STRCT_PROP_ACCESS,
+  NODE_STRCT_FN_ACCESS,
   NODE_STRCT_PROP,
   NODE_NULLLIT,
   NODE_NANLIT,
@@ -168,10 +169,14 @@ typedef struct
   Iris_Nodes nodes;
 } Iris_BlockStmt;
 
-typedef struct Iris_IfStmt
+typedef struct
 {
-  Iris_Node* expr;
-  Iris_Node* block;
+  Iris_Node*  expr;
+  Iris_Node*  block;
+  // array of else/elif
+  Iris_Node** buff;
+  i64_t       len;
+  i64_t       cap;
 } Iris_IfStmt;
 
 typedef struct

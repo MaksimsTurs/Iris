@@ -1,15 +1,16 @@
 #include "iris/utils.h"
+#include <stdio.h>
 
 bool_t Iris_IsSource(const char_t* filepath)
 {
   u64_t len = strlen(filepath);
 
-  if(len < 3)
+  if(len < 5)
   {
     return false;
   }
 
-  return Iris_StrnCmp((filepath + (len - 3)), IRIS_EXTENSION, 3);
+  return Iris_StrnCmp((filepath + (len - 4)), IRIS_EXTENSION, 4);
 }
 
 Iris_Source Iris_LoadSource(const i8_t* filepath)
@@ -18,6 +19,7 @@ Iris_Source Iris_LoadSource(const i8_t* filepath)
   FILE* file = fopen(filepath, "rb");
   i64_t len = 0;
 
+  // printf("%s\n", filepath);
   fseek(file, 0, SEEK_END);
   len = (i64_t)ftell(file);
   fseek(file, 0, SEEK_SET);

@@ -1,0 +1,13 @@
+add:(): void
+{}
+
+main: (): void 
+{
+  var sus: i64 = 20
+
+  for var i: i64 = 0: i < 10: i = i + 1
+  {
+    add()
+    var c: i64 = 15
+  }
+}

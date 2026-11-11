@@ -6,7 +6,7 @@
 #include "iris/mem.h"
 #include "iris/typedef.h"
 
-#define IRIS_EXTENSION "iri"
+#define IRIS_EXTENSION "iris"
 
 #define Iris_Max(a, b) a > b ? a : b
 
