@@ -1,32 +1,31 @@
 #include "iris/utils.h"
+#include "iris/lexer.h"
 
 bool_t Iris_IsSource(const char_t* filepath)
 {
   u64_t len = strlen(filepath);
-
-  if(len < 5)
-  {
-    return false;
-  }
-
+  if(len < 5) return false;
   return Iris_StrnCmp((filepath + (len - 4)), IRIS_EXTENSION, 4);
 }
 
-Iris_Source Iris_LoadSource(const i8_t* filepath)
+Iris_Source Iris_LoadSource(const char_t* modulepath)
 {
   Iris_Source src = {0};
-  FILE* file = fopen(filepath, "rb");
+  FILE* file = fopen(modulepath, "rb");
   i64_t len = 0;
+
+  if(!file) Iris_ReportInternError("could not find \"%s\" module!", modulepath);
 
   fseek(file, 0, SEEK_END);
   len = (i64_t)ftell(file);
   fseek(file, 0, SEEK_SET);
 
   Iris_ArrayNew(src, len);
+  if(!src.buff) Iris_ReportInternError("could not allocate buffer for module \"%s\"!", modulepath);
   src.len = len - 1;
-  src.modulepath = (char_t*)filepath;
+  src.modulepath = Iris_Cast(char_t*, modulepath);
 
-  fread(src.buff, sizeof(i8_t), (u64_t)len, file);
+  fread(src.buff, sizeof(i8_t), Iris_Cast(u64_t, len), file);
   fclose(file);
   
   return src;
@@ -34,29 +33,14 @@ Iris_Source Iris_LoadSource(const i8_t* filepath)
 
 void_t Iris_DumpSource(const i8_t* code, i64_t len)
 {
-  for(i64_t i = 0; i < len; i++)
-  {
-    printf("%c", code[i]);
-  }
-
+  for(i64_t i = 0; i < len; i++) printf("%c", code[i]);
   printf("\n");
 }
 
 bool_t Iris_StrnCmp(const i8_t* sa, const i8_t* sb, i64_t len)
 {
-  if(sa == sb)
-  {
-    return true;
-  }
-
-  for (i64_t i = 0; i < len; i++)
-  {
-    if(sa[i] != sb[i])
-    {
-      return false;
-    }
-  }
-
+  if(sa == sb) return true;
+  for (i64_t i = 0; i < len; i++) if(sa[i] != sb[i]) return false;
   return true;
 }
 
