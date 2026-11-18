@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define Iris_LexerIsSomeKeyword($token, $keyword, $len) Iris_StrnCmp(($token)->start, $keyword, Iris_Max(($token)->len, $len))
+#define Iris_LexerIsSomeKeyword($token, $keyword) Iris_StrnCmp(($token)->start, $keyword, Iris_Max(($token)->len, (i16_t)(sizeof($keyword) - 1)))
 
 #define IRIS_LEXER_DEF_TOKENS_CAP 32
 
