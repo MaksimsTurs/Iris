@@ -76,6 +76,8 @@ typedef enum
   TP_NIL,
   TP_NAN,
   TP_INF,
+  TP_STRCT,
+  TP_PTR,
   TP_I8,
   TP_U8,
   TP_I16,
@@ -86,8 +88,6 @@ typedef enum
   TP_U64,
   TP_F32,
   TP_F64,
-  TP_STRCT,
-  TP_PTR,
 } Iris_TypeKind;
 
 typedef struct
