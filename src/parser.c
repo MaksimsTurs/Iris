@@ -369,11 +369,11 @@ static Iris_Node* Iris_ParserNewUnaryExpr(Iris_Arena* arena, Iris_Node* parent, 
   return node;
 }
 
-static Iris_Node* Iris_ParserNewFnCallExpr(Iris_Arena* arena, Iris_Node* parent, Iris_Atom* atom)
+static Iris_Node* Iris_ParserNewFnCallExpr(Iris_Arena* arena, Iris_Node* parent, Iris_Token* token, Iris_Atom* atom)
 {
   Iris_Node* node = Iris_ParserNewNode(arena, parent, NODE_FN_CALL, sizeof(Iris_FnCallExpr));
 
-  Iris_Cast(Iris_FnCallExpr*, node->as)->atom = *atom;
+  Iris_Cast(Iris_FnCallExpr*, node->as)->atom = !token && atom ? *atom : Iris_ParserNewAtom(token);
   Iris_ArrayNew(Iris_Cast(Iris_FnCallExpr*, node->as)->nodes, IRIS_PARSER_DEF_NODE_ARR_CAP);
   if(!Iris_Cast(Iris_FnCallExpr*, node->as)->nodes.buff) Iris_ReportInternError("could not initialize call expr nodes buffer");
 
@@ -428,20 +428,17 @@ static Iris_Node* Iris_ParserGetDefaultVal(Iris_Parser* parser, Iris_Node* paren
   return val;
 }
 
-static void_t Iris_ParserParseFnCallArgList(Iris_Parser* parser, Iris_Scope* scope, Iris_Node* node, Iris_FnDefStmt* stmt)
+static void_t Iris_ParserParseFnCallArgList(Iris_Parser* parser, Iris_Scope* scope, Iris_Node* node)
 {
   Iris_Node* arg = null;
+  Iris_Token* token = null;
 
   Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_BPAR_L));
-  for(i16_t i = 0; i < stmt->args_count; i++)
+  while((token = Iris_LexerPickToken(parser->lex, 0)) && token->type != TK_BPAR_R)
   {
     arg = Iris_ParserParseAssignExpr(parser, node, scope);
     Iris_ArrayPush(Iris_Cast(Iris_FnCallExpr*, node->as)->nodes, arg);
-    
-    if(Iris_LexerPickToken(parser->lex, 0)->type != TK_BPAR_R)
-    {
-      Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_COMMA));
-    }
+    if(Iris_LexerPickToken(parser->lex, 0)->type != TK_BPAR_R) Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_COMMA));
   }
   Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_BPAR_R));
 }
@@ -449,9 +446,8 @@ static void_t Iris_ParserParseFnCallArgList(Iris_Parser* parser, Iris_Scope* sco
 static Iris_Node* Iris_ParserParseFnCallExpr(Iris_Parser* parser, Iris_Node* parent, Iris_Scope* scope)
 {
   Iris_Token* token = Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_IDENT));
-  Iris_FnDefStmt* stmt = Iris_ParserScopeGetFnDef(scope, token->start, token->len);
-  Iris_Node* node = Iris_ParserNewFnCallExpr(parser->arena, parent, &stmt->atom);
-  Iris_ParserParseFnCallArgList(parser, scope, node, stmt);
+  Iris_Node* node = Iris_ParserNewFnCallExpr(parser->arena, parent, token, null);
+  Iris_ParserParseFnCallArgList(parser, scope, node);
   return node;
 }
 
@@ -459,8 +455,8 @@ static Iris_Node* Iris_ParserParseStrctFnCallExpr(Iris_Parser* parser, Iris_Scop
 {
   Iris_Node* node = null;
   Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_IDENT));  
-  node = Iris_ParserNewFnCallExpr(parser->arena, parent, &fn->atom);
-  Iris_ParserParseFnCallArgList(parser, scope, node, fn);
+  node = Iris_ParserNewFnCallExpr(parser->arena, parent, null, &fn->atom);
+  Iris_ParserParseFnCallArgList(parser, scope, node);
   return node;
 }
 
@@ -739,7 +735,7 @@ static Iris_Node* Iris_ParserParseCondExpr(Iris_Parser* parser, Iris_Node* paren
   Iris_Token* token = null;
 
   while((token = Iris_LexerPickToken(parser->lex, 0)) && 
-        (token->type == TK_EQ || token->type == TK_EQ_GT || token->type == TK_EQ_LT ||
+        (token->type == TK_NOT_EQ || token->type == TK_EQ || token->type == TK_EQ_GT || token->type == TK_EQ_LT ||
          token->type == TK_GT || token->type == TK_LT))
   {
     op = Iris_ParserTokenKindToOprKind(token->type);
@@ -998,6 +994,7 @@ static Iris_Node* Iris_ParserParseIfStmt(Iris_Parser* parser, Iris_Node* fn, Iri
 static Iris_Node* Iris_ParserParseForStmt(Iris_Parser* parser, Iris_Node* fn, Iris_Node* body)
 {
   Iris_Token* token = null;
+  Iris_Token* next = null;
   Iris_Node* node = null;
   Iris_Node* child = null;
   Iris_BodyStmt* self_body_stmt = null;
@@ -1005,11 +1002,21 @@ static Iris_Node* Iris_ParserParseForStmt(Iris_Parser* parser, Iris_Node* fn, Ir
   node = Iris_ParserNewForStmt(parser->arena, body, &Iris_Cast(Iris_BodyStmt*, body->as)->scope);
   self_body_stmt = Iris_Cast(Iris_ForStmt*, node->as)->body->as;
   Iris_Cast(Iris_ForStmt*, node->as)->init = Iris_ParserParseStmtOrExpr(parser, fn, Iris_Cast(Iris_ForStmt*, node->as)->body);
-  Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_COLON));
+  Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_SEMI));
   Iris_Cast(Iris_ForStmt*, node->as)->cond = Iris_ParserParseAssignExpr(parser, node, &self_body_stmt->scope);
-  Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_COLON));
+  Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_SEMI));
   Iris_Cast(Iris_ForStmt*, node->as)->inc = Iris_ParserParseAssignExpr(parser, node, &self_body_stmt->scope);
-  Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_COLON));
+  if(Iris_Cast(Iris_ForStmt*, node->as)->inc->type != NODE_BIN ||
+     (Iris_Cast(Iris_ForStmt*, node->as)->inc->type == NODE_BIN &&
+     Iris_Cast(Iris_BinExpr*, Iris_Cast(Iris_ForStmt*, node->as)->inc->as)->op != OPR_ASSIGN))
+  {
+    token = Iris_LexerPickToken(parser->lex, 0);
+    next = Iris_LexerPickToken(parser->lex, 1);
+    Iris_ReportSyntaxError(parser->lex->src.modulepath, "expected assign expression", null, next->start, next->len, token->row, token->col);
+
+  }
+
+  Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_SEMI));
   Iris_ParserExpectAndConsume(parser->lex, Iris_ParserTKList(TK_BBRACES_L));
   
   while((token = Iris_LexerPickToken(parser->lex, 0)) && token->type != TK_BBRACES_R)
@@ -1026,7 +1033,7 @@ static Iris_Node* Iris_ParserParseForStmt(Iris_Parser* parser, Iris_Node* fn, Ir
 Iris_Node* Iris_ParserParseStmtOrExpr(Iris_Parser* parser, Iris_Node* fn, Iris_Node* body)
 {
   Iris_Token* token = Iris_LexerPickToken(parser->lex, 0);
-  
+
   if(token->type == TK_STRCT)
   {
     Iris_LexerConsumeToken(parser->lex);
