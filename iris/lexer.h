@@ -4,48 +4,73 @@
 #include "iris/mem.h"
 #include "iris/utils.h"
 #include "iris/typedef.h"
-#include "iris/ansicodes.h"
 
 #include <stdio.h>
 #include <stdint.h>
 
-#define IRIS_LEXER_DEF_TOKENS_CAP 12
-#define IRIS_LEXER_MAX_TOKEN_LEN  UINT16_MAX - 2
+#define Iris_LexerIsSomeKeyword($token, $keyword, $len) Iris_StrnCmp(($token)->start, $keyword, Iris_Max(($token)->len, $len))
+
+#define IRIS_LEXER_DEF_TOKENS_CAP 32
 
 typedef enum 
 {
-  TK_UNKNOWN = 0,
+  TK_UNKNOWN = -1,
+  TK_IF,
+  TK_ELSE,
+  TK_ELIF,
+  TK_FOR,
+  TK_RET,
+  TK_VAR,
+  TK_CONST,
+  TK_IMPRT,
+  TK_EXPRT,
+  TK_STRCT,
+  // Literals
   TK_NANLIT,
   TK_INFINITYLIT,
-  TK_NULLLIT,
+  TK_NILLIT,
   TK_TRUELIT,
   TK_FALSELIT,
   TK_NUMLIT,
   TK_STRINGLIT,
+  // Words
   TK_TYPE,
   TK_IDENT,
   TK_KEYWORD,
+  TK_MODULE,
+  // Punctuation
   TK_BPAR_L,
   TK_BPAR_R,
   TK_BBRACES_L,
   TK_BBRACES_R,
+  TK_SBRACKET_L,
+  TK_SBRACKET_R,
   TK_SEMI,
   TK_COLON,
-  TK_NOT,
+  TK_COMMA,
+  // Operators
   TK_ASSIGN,
+  TK_NOT,
   TK_PLUS,
   TK_MINUS,
   TK_MUL,
   TK_DIV,
+  TK_MOD,
   TK_EQ,
   TK_NOT_EQ,
   TK_EQ_LT,
   TK_EQ_GT,
   TK_GT,
   TK_LT,
-  TK_EOF,
   TK_AND,
-  TK_OR
+  TK_OR,
+  TK_BIT_OR,
+  TK_BIT_AND,
+  TK_BIT_NOT,
+  TK_BIT_XOR,
+  TK_BIT_LSHIFT,
+  TK_BIT_RSHIFT,
+  TK_EOF
 } Iris_TokenKind;
 
 typedef struct 
