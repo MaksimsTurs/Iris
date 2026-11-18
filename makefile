@@ -19,6 +19,7 @@ COBJS	 	:= ./bin/objs/main.o \
 					 ./bin/objs/lexer.o \
 					 ./bin/objs/parser.o \
 					 ./bin/objs/bytecode.o \
+					 ./bin/objs/vm.o \
 
 ifeq ($(Type), Debug)
 	CFLAGS += -O0 -ggdb
@@ -34,7 +35,7 @@ preparedirs:
 	mkdir bin/objs -p
 
 libs:
-	cd core && make && cd ..
+	cd std && make && cd ..
 
 irisc: $(COBJS)
 	$(CC) $(CFLAGS) -o $(EXE) $(COBJS)
