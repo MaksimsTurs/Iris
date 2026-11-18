@@ -1,8 +1,4 @@
 #include "iris/bytecode.h"
-#include "iris/opcodes.h"
-#include "iris/parser.h"
-#include "iris/typedef.h"
-#include "iris/utils.h"
 
 #define Iris_BytecodeHasRetStmt($body) (($body->nodes.len > 0) && ($body->nodes.buff[body->nodes.len - 1]->type == NODE_RET))
 #define Iris_BytecodeIsPrimitiveNode($node) (($node)->type == NODE_NUMLIT || ($node)->type == NODE_BOOLLIT || ($node)->type == NODE_NULLLIT || ($node)->type == NODE_INFINITYLIT)
