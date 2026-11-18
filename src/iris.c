@@ -3,11 +3,11 @@
 #define IRIS_VERSION "1.0.0"
 
 #define Iris_PrintVersion()           printf(IRIS_ANSI_DIM "Iris version: " IRIS_ANSI_RES IRIS_VERSION"\n")
-#define Iris_PrintUsage() do {                                              \
+#define Iris_PrintMainUsage() do {                                          \
   Iris_PrintSection("Usage");                                               \
   Iris_PrintText("irisc");                                                  \
   Iris_PrintText("irisc <help | version>");                                 \
-  Iris_PrintText("irisc <filepath> [...options]");                          \
+  Iris_PrintText("irisc <filepath> [...<option> <value>]");                 \
   Iris_PrintSection("Base Options");                                        \
   Iris_PrintOption("usage",     "Prints this usage text.");                 \
   Iris_PrintOption("version",   "Prints version of a interpreter.");        \
@@ -27,7 +27,7 @@ bool_t Iris_ProcessCmdArgs(Iris_Options* options, i8_t** args, i32_t len)
 {
   if(len == 1)
   {
-    Iris_PrintUsage();
+    Iris_PrintMainUsage();
     return false;
   }
 
@@ -35,7 +35,7 @@ bool_t Iris_ProcessCmdArgs(Iris_Options* options, i8_t** args, i32_t len)
   {
     if(Iris_StrnCmp(args[i], "usage", 4))
     {
-      Iris_PrintUsage();
+      Iris_PrintMainUsage();
       return false;
     }
     else if(Iris_StrnCmp(args[i], "version", 7))
@@ -45,7 +45,7 @@ bool_t Iris_ProcessCmdArgs(Iris_Options* options, i8_t** args, i32_t len)
     }
     else if(Iris_IsSource(args[i]))
     {
-      options->filepath = args[i];
+      options->modulepath = args[i];
     } 
     else if(Iris_StrnCmp(args[i], "ptokens", 6))
     {
@@ -60,6 +60,6 @@ bool_t Iris_ProcessCmdArgs(Iris_Options* options, i8_t** args, i32_t len)
       options->p_code = true;
     }
   }
-  
+
   return true;
 }
