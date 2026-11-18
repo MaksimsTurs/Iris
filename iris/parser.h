@@ -1,31 +1,24 @@
 #ifndef H_IRIS_PARSER
 #define H_IRIS_PARSER
 
-#include "iris/builtin/types.h"
 #include "iris/lexer.h"
 #include "iris/utils.h"
 #include "iris/mem.h"
-#include "iris/ansicodes.h"
 #include "iris/typedef.h"
 
-#include <stdio.h>
-#include <string.h>
-#include <math.h>
-#include <stdlib.h>
+#include <assert.h>
+#include <float.h>
 
-#define Iris_ParserCalcStackOffset(fn) ((fn->stack_size / 8) - 1)
-
-#define IRIS_MAX_FN_ARGS              8
-#define IRIS_PARSER_DEF_NODE_ARR_CAP  8
+#define IRIS_PARSER_DEF_NODE_ARR_CAP  16
 #define IRIS_PARSER_DEF_ARENA_SIZE    128 * 128 * 1
 
-// TODO: Maybe do not save pointer to token for functions, variables 
-//       and struct names, instead create a hash from this name.
+#define Iris_Nan      NAN
+#define Iris_Infinity INFINITY
+#define Iris_Nil      null
 
 typedef enum 
 {
-  NODE_UNKNOWN = 0,
-  NODE_BLCK,
+  NODE_BODY,
   NODE_STRCT_DEF,
   NODE_FN_DEF,
   NODE_FN_CALL,
@@ -36,9 +29,10 @@ typedef enum
   NODE_ELIF,
   NODE_FOR,
   NODE_BIN,
+  NODE_UNARY,
   NODE_IDENT,
-  NODE_STRCT_PROP_ACCESS,
   NODE_STRCT_FN_ACCESS,
+  NODE_STRCT_PROP_ACCESS,
   NODE_STRCT_PROP,
   NODE_NULLLIT,
   NODE_NANLIT,
@@ -51,11 +45,11 @@ typedef enum
 
 typedef enum 
 {
-  OPR_UNKNOWN = 0,
   OPR_PLUS,
   OPR_MINUS,
   OPR_MUL,
   OPR_DIV,
+  OPR_MOD,
   OPR_ASSIGN,
   OPR_EQ,
   OPR_NOT,
@@ -65,8 +59,42 @@ typedef enum
   OPR_GT,
   OPR_LT,
   OPR_AND,
-  OPR_OR
-} Iris_OprType;
+  OPR_OR,
+  OPR_BIT_OR,
+  OPR_BIT_AND,
+  OPR_BIT_NOT,
+  OPR_BIT_XOR,
+  OPR_BIT_LSHIFT,
+  OPR_BIT_RSHIFT
+} Iris_OprKind;
+
+typedef enum
+{
+  TP_VOID,
+  TP_CHAR,
+  TP_BOOL,
+  TP_NIL,
+  TP_NAN,
+  TP_INF,
+  TP_I8,
+  TP_U8,
+  TP_I16,
+  TP_U16,
+  TP_I32,
+  TP_U32,
+  TP_I64,
+  TP_U64,
+  TP_F32,
+  TP_F64,
+  TP_STRCT,
+  TP_PTR,
+} Iris_TypeKind;
+
+typedef struct
+{
+  char_t* buff;
+  i64_t   len;
+} Iris_Atom;
 
 typedef struct 
 {
@@ -83,79 +111,91 @@ typedef struct
   i64_t       len;
 } Iris_Nodes;
 
+typedef struct
+{
+  Iris_Atom     atom;
+  Iris_TypeKind type;
+  Iris_Token*   typename;
+  Iris_Node*    val;
+  i64_t         offset;
+} Iris_StrctPropStmt;
+
+typedef struct
+{
+  Iris_StrctPropStmt* buff;
+  i64_t               cap;
+  i64_t               len;
+} Iris_StrctProps;
+
 typedef struct Iris_Scope
 {
   struct Iris_Scope* parent;
   Iris_Nodes         nodes;
 } Iris_Scope;
 
-typedef struct
-{
-  Iris_Token* key;
-  Iris_Token* typename;
-  Iris_Node*  val;
-  i64_t       offset;
-  i64_t       size;
-} Iris_StrctProp;
-
 // Expressions
 
 typedef struct
 {
   struct Iris_StrctDefStmt* def;
-  Iris_StrctProp*           buff;
-  i64_t                     len;
-  i64_t                     cap;
-} Iris_Strct;
+  Iris_StrctProps           props;
+} Iris_StrctLitExpr;
 
 typedef union
 {
-  Iris_Float64 f64;
-  Iris_Int64   i64;
-  Iris_Bool    bool;
-  Iris_Strct   strct;
-  Iris_Str     str;
+  f64_t             f64;
+  i64_t             i64;
+  Iris_StrctLitExpr strct;
 } Iris_LitExpr;
 
 typedef struct
 {
-  i64_t      stack_offset;
-  i64_t      instrct_offset;
-  Iris_Node* val;
+  Iris_Node* prop;
+  i64_t      offset;
 } Iris_StrctPropAccessExpr;
 
 typedef struct 
 {
-  Iris_Token* name;
-  i64_t       stack_offset;
+  struct Iris_VarStmt* def;
 } Iris_IdentExpr;
 
 typedef struct 
 {
   Iris_Node*   ls;
-  Iris_OprType op;
+  Iris_OprKind op;
   Iris_Node*   rs;
 } Iris_BinExpr;
 
 typedef struct
 {
-  Iris_Node* buff[IRIS_MAX_FN_ARGS];
-  i16_t      len;
-} Iris_FnArgsList;
+  Iris_Node*   operand;
+  Iris_OprKind op;
+} Iris_UnaryExpr;
 
 typedef struct 
 {
-  Iris_Token*     name;
-  Iris_FnArgsList args; 
+  Iris_Atom   atom;
+  Iris_Nodes  nodes;
 } Iris_FnCallExpr;
 
 // Statements
 
+typedef struct
+{
+  Iris_Atom       atom;
+  i64_t           size;
+  Iris_StrctProps props;
+} Iris_StrctDefStmt;
+
 typedef struct 
 {
-  Iris_Token* name;
-  i64_t       offset;
-  Iris_Node*  val;
+  Iris_Atom     atom; 
+  // Used if type is TP_STRCT.
+  Iris_Token*   typename;
+  Iris_Node*    val;
+  i64_t         offset;
+  Iris_TypeKind type;
+  bool_t        is_global : 1;
 } Iris_VarStmt;
 
 typedef struct 
@@ -167,43 +207,30 @@ typedef struct
 {
   Iris_Scope scope;
   Iris_Nodes nodes;
-} Iris_BlockStmt;
+  i64_t      memsize;
+} Iris_BodyStmt;
 
 typedef struct
 {
-  Iris_Node*  expr;
-  Iris_Node*  block;
-  // array of else/elif
-  Iris_Node** buff;
-  i64_t       len;
-  i64_t       cap;
+  Iris_Node*  cond;
+  Iris_Node*  body;
+  Iris_Nodes  nextconds;
 } Iris_IfStmt;
 
 typedef struct
 {
   Iris_Node* init;
-  Iris_Node* expr;
+  Iris_Node* cond;
   Iris_Node* inc;
-  Iris_Node* block;
+  Iris_Node* body;
 } Iris_ForStmt;
 
 typedef struct 
 {
-  bool_t         has_ret;
-  i64_t          args_count;
-  i64_t          stack_size;
-  Iris_Token*    name;
-  Iris_Node*     block;
+  Iris_Atom   atom;
+  Iris_Node*  body;
+  i64_t       args_count;
 } Iris_FnDefStmt;
-
-typedef struct
-{
-  Iris_Token*     name;
-  i64_t           size;
-  Iris_StrctProp* buff;
-  i64_t           len;
-  i64_t           cap;
-} Iris_StrctDefStmt;
 
 typedef struct 
 {
@@ -215,8 +242,8 @@ typedef struct
 void_t Iris_ParserNew(Iris_Parser* parser, Iris_Lexer* lex);
 void_t Iris_ParserDestroy(Iris_Parser* parser);
 void_t Iris_ParserParse(Iris_Parser* parser);
-void_t Iris_ParserDump(const Iris_Node* node, i64_t max_depth);
-const i8_t* Iris_ParserNodeTypeToString(Iris_NodeType type);
-const i8_t* Iris_ParserOprtTypeToString(Iris_OprType type);
+void_t Iris_ParserDump(const Iris_Node* node);
+const char_t* Iris_ParserNodeTypeToString(Iris_NodeType type);
+const char_t* Iris_ParserOprtTypeToString(Iris_OprKind type);
 
 #endif
