@@ -1,4 +1,8 @@
 #include "iris/bytecode.h"
+#include "iris/opcodes.h"
+#include "iris/parser.h"
+#include "iris/typedef.h"
+#include "iris/utils.h"
 
 #define Iris_BytecodeHasRetStmt($body) (($body->nodes.len > 0) && ($body->nodes.buff[body->nodes.len - 1]->type == NODE_RET))
 #define Iris_BytecodeIsPrimitiveNode($node) (($node)->type == NODE_NUMLIT || ($node)->type == NODE_BOOLLIT || ($node)->type == NODE_NULLLIT || ($node)->type == NODE_INFINITYLIT)
@@ -18,8 +22,8 @@ static Iris_Opcode Iris_BytecodeOprTypeToOpcode(Iris_OprKind type)
   if(type == OPR_NOT_EQ)      return OPC_CMPNEQ;
   if(type == OPR_GT)          return OPC_CMPGT;
   if(type == OPR_LT)          return OPC_CMPLT;
-  if(type == OPR_EQ_GT)       return OPC_CMPELT;
-  if(type == OPR_EQ_LT)       return OPC_CMPEGT;
+  if(type == OPR_EQ_GT)       return OPC_CMPEGT;
+  if(type == OPR_EQ_LT)       return OPC_CMPELT;
   if(type == OPR_OR)          return OPC_OR;
   if(type == OPR_AND)         return OPC_AND;
   if(type == OPR_NOT)         return OPC_NOT;
@@ -167,7 +171,7 @@ static Iris_JMPEntry* Iris_JMPGetFnEntry(Iris_JMPEntryArray* jmps, const Iris_At
   return null;
 }
 
-static void_t Iris_BytecodeBytecodeWriteOpcode(Iris_Bytecode* bytecode, Iris_Opcode opcode)
+static void_t Iris_BytecodeWriteOpcode(Iris_Bytecode* bytecode, Iris_Opcode opcode)
 {
   if(bytecode->len >= bytecode->cap) Iris_ArrayExpand(*bytecode, bytecode->cap * 2);
   if(!bytecode->buff) Iris_ReportInternError("could not expand code buffer");
@@ -176,7 +180,7 @@ static void_t Iris_BytecodeBytecodeWriteOpcode(Iris_Bytecode* bytecode, Iris_Opc
   bytecode->len += sizeof(Iris_Opcode);
 }
 
-static void_t Iris_BytecodeBytecodeWriteType(Iris_Bytecode* bytecode, Iris_TypeKind type)
+static void_t Iris_BytecodeWriteType(Iris_Bytecode* bytecode, Iris_TypeKind type)
 {
   if(bytecode->len >= bytecode->cap) Iris_ArrayExpand(*bytecode, bytecode->cap * 2);
   if(!bytecode->buff) Iris_ReportInternError("could not expand code buffer");
@@ -184,7 +188,7 @@ static void_t Iris_BytecodeBytecodeWriteType(Iris_Bytecode* bytecode, Iris_TypeK
   bytecode->len += sizeof(Iris_TypeKind);
 }
 
-static void_t Iris_BytecodeBytecodeWriteInt64(Iris_Bytecode* bytecode, i64_t num)
+static void_t Iris_BytecodeWriteInt64(Iris_Bytecode* bytecode, i64_t num)
 {
   if(bytecode->len >= bytecode->cap) Iris_ArrayExpand(*bytecode, bytecode->cap * 2);
   if(!bytecode->buff) Iris_ReportInternError("could not expand code buffer");
@@ -192,7 +196,7 @@ static void_t Iris_BytecodeBytecodeWriteInt64(Iris_Bytecode* bytecode, i64_t num
   bytecode->len += sizeof(num);
 }
 
-static void_t Iris_BytecodeBytecodeWriteFloat64(Iris_Bytecode* bytecode, f64_t num)
+static void_t Iris_BytecodeWriteFloat64(Iris_Bytecode* bytecode, f64_t num)
 {
   if(bytecode->len >= bytecode->cap) Iris_ArrayExpand(*bytecode, bytecode->cap * 2);
   if(!bytecode->buff) Iris_ReportInternError("could not expand code buffer");
@@ -200,7 +204,7 @@ static void_t Iris_BytecodeBytecodeWriteFloat64(Iris_Bytecode* bytecode, f64_t n
   bytecode->len += sizeof(num);
 }
 
-static void_t Iris_BytecodeBytecodePatchInt64(Iris_Bytecode* bytecode, i64_t offset, i64_t num)
+static void_t Iris_BytecodePatchInt64(Iris_Bytecode* bytecode, i64_t offset, i64_t num)
 {
   if(offset > bytecode->len) Iris_ReportInternError("can not path \"Int64\" on offset \"%li\", code len is \"%li\"", offset, bytecode->len);
   *Iris_Cast(i64_t*, (bytecode->buff + offset)) = num;
@@ -224,14 +228,15 @@ static void Iris_BytecodeGenerateFnCallExpr(Iris_Bytecode* bytecode, const Iris_
   for(i64_t i = expr->nodes.len - 1; i >= 0; i--) Iris_BytecodeGenerateStmtOrExpr(bytecode, expr->nodes.buff[i]);
   
   jmp_entry = Iris_JMPGetFnEntry(&bytecode->jmps, &expr->atom);
-  Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_FN_CALL);
-  Iris_BytecodeBytecodeWriteInt64(bytecode, jmp_entry->start_offset);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_FN_CALL);
+  Iris_BytecodeWriteInt64(bytecode, jmp_entry->start_offset);
 }
 
 static void_t Iris_BytecodeGeneratePrimitiveLitExpr(Iris_Bytecode* bytecode, Iris_LitExpr* expr, Iris_TypeKind type)
 {
-  if(type == TP_F64) Iris_BytecodeBytecodeWriteFloat64(bytecode, expr->f64);
-  if(type == TP_I64) Iris_BytecodeBytecodeWriteInt64(bytecode, expr->i64);
+  if(type == TP_F64) Iris_BytecodeWriteFloat64(bytecode, expr->f64);
+  // TODO: Maybe separate TK_NUMBER into TK_NUMFLOAT, TK_NUMINT?
+  if(type == TP_I64) Iris_BytecodeWriteInt64(bytecode, (i64_t)expr->f64);
 }
 
 static void_t Iris_BytecodeGenerateBinExprNode(Iris_Bytecode* bytecode, Iris_Node* node)
@@ -249,15 +254,15 @@ static void_t Iris_BytecodeGenerateBinExpr(Iris_Bytecode* bytecode, Iris_Node* e
   {
     Iris_BytecodeGenerateBinExprNode(bytecode, bin_expr->rs);
     var_stmt = Iris_Cast(Iris_VarStmt*, Iris_Cast(Iris_IdentExpr*, bin_expr->ls->as)->def);
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, var_stmt->is_global ? OPC_MOVGC : OPC_MOVLC);
-    Iris_BytecodeBytecodeWriteType(bytecode, var_stmt->type);
-    Iris_BytecodeBytecodeWriteInt64(bytecode, var_stmt->offset);
+    Iris_BytecodeWriteOpcode(bytecode, var_stmt->is_global ? OPC_MOVGC : OPC_MOVLC);
+    Iris_BytecodeWriteType(bytecode, var_stmt->type);
+    Iris_BytecodeWriteInt64(bytecode, var_stmt->offset);
   }
   else
   {
     Iris_BytecodeGenerateBinExprNode(bytecode, bin_expr->ls);
     Iris_BytecodeGenerateBinExprNode(bytecode, bin_expr->rs);
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, Iris_BytecodeOprTypeToOpcode(bin_expr->op));
+    Iris_BytecodeWriteOpcode(bytecode, Iris_BytecodeOprTypeToOpcode(bin_expr->op));
   }
   
   if(expr->parent) Iris_BytecodeGenerateStmtOrExpr(bytecode, expr->parent);
@@ -271,39 +276,44 @@ static void_t Iris_BytecodeGenerateVarStmt(Iris_Bytecode* bytecode, Iris_Node* n
 
   if(Iris_BytecodeIsLit(stmt->val))
   {
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_LOADLT);
-    Iris_BytecodeBytecodeWriteType(bytecode, stmt->type);
+    Iris_BytecodeWriteOpcode(bytecode, OPC_LOADLT);
+    Iris_BytecodeWriteType(bytecode, stmt->type);
     Iris_BytecodeGeneratePrimitiveLitExpr(bytecode, stmt->val->as, stmt->type);
   }
   else if(stmt->val->type == NODE_IDENT)
   {
     val_var = Iris_Cast(Iris_VarStmt*, Iris_Cast(Iris_IdentExpr*, stmt->val->as)->def);
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, val_var->is_global ? OPC_LOADGC : OPC_LOADLC);
-    Iris_BytecodeBytecodeWriteType(bytecode, val_var->type);
-    Iris_BytecodeBytecodeWriteInt64(bytecode, val_var->offset);
+    Iris_BytecodeWriteOpcode(bytecode, val_var->is_global ? OPC_LOADGC : OPC_LOADLC);
+    Iris_BytecodeWriteType(bytecode, val_var->type);
+    Iris_BytecodeWriteInt64(bytecode, val_var->offset);
   }
   else
   {
     Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->val);
   }
 
-  Iris_BytecodeBytecodeWriteOpcode(bytecode, stmt->is_global ? OPC_MOVGC : OPC_MOVLC);
-  Iris_BytecodeBytecodeWriteType(bytecode, stmt->type);
-  Iris_BytecodeBytecodeWriteInt64(bytecode, stmt->offset);
+  Iris_BytecodeWriteOpcode(bytecode, stmt->is_global ? OPC_MOVGC : OPC_MOVLC);
+  Iris_BytecodeWriteType(bytecode, stmt->type);
+  Iris_BytecodeWriteInt64(bytecode, stmt->offset);
 }
 
 static void_t Iris_BytecodeGenerateIfStmt(Iris_Bytecode* bytecode, const Iris_IfStmt* stmt)
 {
+  static i64_t patch_offsets[32] = {0};
+  i64_t patch_len = 0;
   i64_t apatch = 0;
   i64_t bpatch = 0;
   Iris_IfStmt* elsif = null;
 
   Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->cond);
-  Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_JMPNIF);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_JMPNIF);
   apatch = bytecode->len;
-  Iris_BytecodeBytecodeWriteInt64(bytecode, 0);
-  Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->body);
-  Iris_BytecodeBytecodePatchInt64(bytecode, apatch, bytecode->len);
+  Iris_BytecodeWriteInt64(bytecode, 0);
+  Iris_BytecodeGenerateBodyStmt(bytecode, stmt->body->as);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_JMP);
+  patch_offsets[patch_len++] = bytecode->len;
+  Iris_BytecodeWriteInt64(bytecode, 0);
+  Iris_BytecodePatchInt64(bytecode, apatch, bytecode->len);
 
   for(i64_t i = 0; i < stmt->nextconds.len; i++)
   {
@@ -311,22 +321,30 @@ static void_t Iris_BytecodeGenerateIfStmt(Iris_Bytecode* bytecode, const Iris_If
 
     if(stmt->nextconds.buff[i]->type == NODE_ELSE)
     {
-      Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_JMP);
+      Iris_BytecodeWriteOpcode(bytecode, OPC_JMP);
       bpatch = bytecode->len;
-      Iris_BytecodeBytecodeWriteInt64(bytecode, 0);
-      Iris_BytecodeBytecodePatchInt64(bytecode, apatch, bytecode->len);
-      Iris_BytecodeGenerateStmtOrExpr(bytecode, elsif->body);
-      Iris_BytecodeBytecodePatchInt64(bytecode, bpatch, bytecode->len);
+      Iris_BytecodeWriteInt64(bytecode, 0);
+      Iris_BytecodePatchInt64(bytecode, apatch, bytecode->len);
+      Iris_BytecodeGenerateBodyStmt(bytecode, elsif->body->as);
+      Iris_BytecodePatchInt64(bytecode, bpatch, bytecode->len);
     }
     else
     {
       Iris_BytecodeGenerateStmtOrExpr(bytecode, elsif->cond);
-      Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_JMPNIF);
+      Iris_BytecodeWriteOpcode(bytecode, OPC_JMPNIF);
       apatch = bytecode->len;
-      Iris_BytecodeBytecodeWriteInt64(bytecode, 0);
-      Iris_BytecodeGenerateStmtOrExpr(bytecode, elsif->body);
-      Iris_BytecodeBytecodePatchInt64(bytecode, apatch, bytecode->len);
+      Iris_BytecodeWriteInt64(bytecode, 0);
+      Iris_BytecodeGenerateBodyStmt(bytecode, elsif->body->as);
+      Iris_BytecodeWriteOpcode(bytecode, OPC_JMP);
+      patch_offsets[patch_len++] = bytecode->len;
+      Iris_BytecodeWriteInt64(bytecode, 0);
+      Iris_BytecodePatchInt64(bytecode, apatch, bytecode->len);
     }
+  }
+
+  for(i64_t i = 0; i < patch_len; i++)
+  {
+    Iris_BytecodePatchInt64(bytecode, patch_offsets[i], bytecode->len);
   }
 }
 
@@ -339,16 +357,22 @@ static void_t Iris_BytecodeGenerateForStmt(Iris_Bytecode* bytecode, const Iris_F
   Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->init);
   expr_offset = bytecode->len;
   // Expression section
-  Iris_BytecodeGenerateBinExpr(bytecode, stmt->cond);
-  Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_JMPNIF);
+  Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->cond);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_JMPNIF);
   exit_jmp_offset = bytecode->len;
-  Iris_BytecodeBytecodeWriteInt64(bytecode, 0);
+  Iris_BytecodeWriteInt64(bytecode, 0);
   // Body and Increment section
   Iris_BytecodeGenerateBodyStmt(bytecode, stmt->body->as);
   Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->inc);
-  Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_JMP);
-  Iris_BytecodeBytecodeWriteInt64(bytecode, expr_offset);
-  Iris_BytecodeBytecodePatchInt64(bytecode, exit_jmp_offset, bytecode->len);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_JMP);
+  Iris_BytecodeWriteInt64(bytecode, expr_offset);
+  Iris_BytecodePatchInt64(bytecode, exit_jmp_offset, bytecode->len);
+}
+
+static void_t Iris_BytecodeGenerateRetStmt(Iris_Bytecode* bytecode, const Iris_RetStmt* stmt)
+{
+  if(stmt->val) Iris_BytecodeGenerateStmtOrExpr(bytecode, stmt->val);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_FN_RETVOID);
 }
 
 void_t Iris_BytecodeGenerateStmtOrExpr(Iris_Bytecode* bytecode, Iris_Node* stmt_or_expr)
@@ -362,21 +386,24 @@ void_t Iris_BytecodeGenerateStmtOrExpr(Iris_Bytecode* bytecode, Iris_Node* stmt_
   if(stmt_or_expr->type == NODE_IF) Iris_BytecodeGenerateIfStmt(bytecode, stmt_or_expr->as);
   else if(stmt_or_expr->type == NODE_FOR) Iris_BytecodeGenerateForStmt(bytecode, stmt_or_expr->as);
   else if(stmt_or_expr->type == NODE_FN_CALL) Iris_BytecodeGenerateFnCallExpr(bytecode, stmt_or_expr->as);
-  else if(stmt_or_expr->type == NODE_RET) Iris_BytecodeGenerateStmtOrExpr(bytecode, Iris_Cast(Iris_RetStmt*, stmt_or_expr->as)->val);
+  else if(stmt_or_expr->type == NODE_RET) Iris_BytecodeGenerateRetStmt(bytecode, stmt_or_expr->as);
   else if(stmt_or_expr->type == NODE_BIN) Iris_BytecodeGenerateBinExpr(bytecode, stmt_or_expr);
-  else if(stmt_or_expr->type == NODE_VAR && !Iris_BytecodeIsArg(Iris_Cast(Iris_VarStmt*, stmt_or_expr->as))) Iris_BytecodeGenerateVarStmt(bytecode, stmt_or_expr);
+  else if(stmt_or_expr->type == NODE_VAR && !Iris_BytecodeIsArg(Iris_Cast(Iris_VarStmt*, stmt_or_expr->as)))
+  {
+    Iris_BytecodeGenerateVarStmt(bytecode, stmt_or_expr); 
+  }
   else if(Iris_BytecodeIsPrimitiveNode(stmt_or_expr))
   {
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_LOADLT);
-    Iris_BytecodeBytecodeWriteType(bytecode, TP_F64);
-    Iris_BytecodeGeneratePrimitiveLitExpr(bytecode, stmt_or_expr->as, TP_F64);
+    Iris_BytecodeWriteOpcode(bytecode, OPC_LOADLT);
+    Iris_BytecodeWriteType(bytecode, TP_I64);
+    Iris_BytecodeGeneratePrimitiveLitExpr(bytecode, stmt_or_expr->as, TP_I64);
   }
   else if(stmt_or_expr->type == NODE_IDENT)
   {
     val_var = Iris_Cast(Iris_VarStmt*, Iris_Cast(Iris_IdentExpr*, stmt_or_expr->as)->def);
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, val_var->is_global ? OPC_LOADGC : OPC_LOADLC);
-    Iris_BytecodeBytecodeWriteType(bytecode, val_var->type);
-    Iris_BytecodeBytecodeWriteInt64(bytecode, val_var->offset);
+    Iris_BytecodeWriteOpcode(bytecode, val_var->is_global ? OPC_LOADGC : OPC_LOADLC);
+    Iris_BytecodeWriteType(bytecode, val_var->type);
+    Iris_BytecodeWriteInt64(bytecode, val_var->offset);
   }
 }
 
@@ -390,17 +417,17 @@ static void_t Iris_BytecodeGenerateFnPrologue(Iris_Bytecode* bytecode, Iris_Node
   entry.fn = stmt;
   entry.start_offset = bytecode->len;
   Iris_JMPAddEntry(&bytecode->jmps, &entry);
-  Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_FN);
-  Iris_BytecodeBytecodeWriteInt64(bytecode, body->memsize);
+  Iris_BytecodeWriteOpcode(bytecode, OPC_FN);
+  Iris_BytecodeWriteInt64(bytecode, body->memsize);
 
   if(Iris_StrnCmp(stmt->atom.buff, "main", Iris_Max(stmt->atom.len, 4))) bytecode->main_offset = entry.start_offset;
 
   for(i64_t i = 0; i < stmt->args_count; i++)
   {
     arg = body->nodes.buff[i]->as;
-    Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_MOVLC);
-    Iris_BytecodeBytecodeWriteType(bytecode, arg->type);
-    Iris_BytecodeBytecodeWriteInt64(bytecode, arg->offset);
+    Iris_BytecodeWriteOpcode(bytecode, OPC_MOVLC);
+    Iris_BytecodeWriteType(bytecode, arg->type);
+    Iris_BytecodeWriteInt64(bytecode, arg->offset);
   }
 }
 
@@ -408,9 +435,7 @@ static void_t Iris_BytecodeGenerateFnEpilogue(Iris_Bytecode* bytecode, Iris_Node
 {
   Iris_FnDefStmt* stmt = node->as;
   Iris_BodyStmt* body = stmt->body->as;
-
-  if(Iris_BytecodeHasRetStmt(body)) Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_FN_RETVAL);
-  else                              Iris_BytecodeBytecodeWriteOpcode(bytecode, OPC_FN_RETVOID);
+  if(!Iris_BytecodeHasRetStmt(body)) Iris_BytecodeWriteOpcode(bytecode, OPC_FN_RETVOID);
 }
  
 void_t Iris_BytecodeNew(Iris_Bytecode* bytecode, Iris_Parser* parser)
