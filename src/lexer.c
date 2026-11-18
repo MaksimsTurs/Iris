@@ -33,10 +33,7 @@ static Iris_Token* Iris_LexerNewToken(Iris_Lexer* lex, Iris_TokenKind kind)
   if(!Iris_ArrayHasCap(lex->tokens))
   {
     Iris_ArrayExpand(lex->tokens, lex->tokens.cap * 2);
-    if(!lex->tokens.buff)
-    {
-      Iris_ReportInternError("could not expand tokens array!");
-    }
+    if(!lex->tokens.buff) Iris_ReportInternError("could not expand tokens array!");
   }
 
   Iris_ArrayPush(lex->tokens, token);
@@ -151,6 +148,17 @@ void_t Iris_LexerTokenize(Iris_Lexer* lex)
     {
       while(Iris_LexerConsumeChar(lex) != '\n');
     }
+    else if(lex->tokens.len > 0 && lex->tokens.buff[lex->tokens.len - 1].type == TK_IMPRT)
+    {
+      while(Iris_LexerIsSpace(lex)) Iris_LexerConsumeChar(lex);
+      token = Iris_LexerNewToken(lex, TK_MODULE);
+      while(Iris_LexerIsAlpha(lex) || Iris_LexerIsNum(lex) || lex->ch == '/' || lex->ch == ':')
+      {
+        token->len++;
+        Iris_LexerConsumeChar(lex);
+      }
+      token->len--;
+    }
     else if(Iris_LexerIsIdent(lex))
     {
       token = Iris_LexerNewToken(lex, TK_IDENT);
@@ -165,18 +173,6 @@ void_t Iris_LexerTokenize(Iris_Lexer* lex)
       if(Iris_LexerIsKeyword(token))
       {
         token->type = Iris_LexerGetKeywordKind(token);
-
-        if(Iris_LexerIsSomeKeyword(token, "imprt", 5))
-        { 
-          while(Iris_LexerIsSpace(lex)) Iris_LexerConsumeChar(lex);
-          token = Iris_LexerNewToken(lex, TK_MODULE);
-          while(Iris_LexerIsAlpha(lex) || lex->ch == '/')
-          {
-            token->len++;
-            Iris_LexerConsumeChar(lex);
-          }
-          token->len--;
-        }
       }
       else if(Iris_LexerIsType(token))        token->type = TK_TYPE;
       else if(Iris_LexerIsTrueLit(token))     token->type = TK_TRUELIT;
