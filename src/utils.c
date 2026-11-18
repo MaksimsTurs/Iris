@@ -60,7 +60,7 @@ void_t Iris_ReportSyntaxError(const char_t* modulepath, const char_t* msg, const
 {
   i32_t kind = -1;
 
-  printf(IRIS_ANSI_RED "Error[Syntax]" IRIS_ANSI_RES "[%s:%li:%li]:", modulepath, row, col);
+  printf(IRIS_ANSI_RED "Error[Syntax]" IRIS_ANSI_RES "[%s:%li:%li]: ", modulepath, row, col);
 
   if(kinds)
   {
