@@ -2,14 +2,13 @@
 #define H_IRIS
 
 #include "iris/utils.h"
-#include "iris/ansicodes.h"
 #include "iris/typedef.h"
 
 #include <stdio.h>
 
 typedef struct
 {
-  char_t* filepath;
+  char_t* modulepath;
   bool_t  p_tokens;
   bool_t  p_ast;
   bool_t  p_code;
